@@ -1,4 +1,4 @@
-const CACHE_NAME = "line-video-compressor-v2"; // バージョンを更新して強制リフレッシュ
+const CACHE_NAME = "line-video-compressor-v3"; // バージョンを更新して強制リフレッシュ
 const ASSETS = [
   "./",
   "./index.html",
@@ -32,6 +32,13 @@ self.addEventListener("activate", (event) => {
       );
     }).then(() => self.clients.claim())
   );
+});
+
+// 外からのメッセージで即座にskipWaitingを実行できるようにする
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.action === "skipWaiting") {
+    self.skipWaiting();
+  }
 });
 
 // fetchイベントをインターセプトしてCOOP/COEPヘッダーを注入し、SharedArrayBufferを有効化する

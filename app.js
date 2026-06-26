@@ -1,11 +1,21 @@
 // ----------------------------------------------------
-// 1. PWA Service Worker Registration
+// 1. PWA Service Worker Ready & Update Notification
 // ----------------------------------------------------
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js')
-      .then(reg => console.log('Service Worker registered successfully:', reg.scope))
-      .catch(err => console.error('Service Worker registration failed:', err));
+  // 登録処理自体は index.html の head タグ内で最速実行されているため、
+  // app.js 側では準備完了(ready)を待ってバックグラウンド更新のみを監視します
+  navigator.serviceWorker.ready.then(reg => {
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            showToast("アプリアップデートを検出しました。再読み込み中...");
+            setTimeout(() => { location.reload(); }, 1500);
+          }
+        });
+      }
+    });
   });
 }
 
