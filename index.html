@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>LINE動画圧縮 PWA</title>
+  
+  <!-- PWA Settings -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LINE動画圧縮">
+  <link rel="apple-touch-icon" href="icon.png">
+  
+  <!-- SEO & Style Sheets -->
+  <meta name="description" content="スマートフォン上で動画をLINE送信向けに最適圧縮するPWAアプリ。サーバーへ動画を送信せず、ローカル（端末内）で完結する安全なエンコーダーです。">
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+
+  <!-- FFmpeg Loading Overlay -->
+  <div id="loaderOverlay" class="loader-overlay">
+    <div class="spinner"></div>
+    <div class="loader-title" id="loaderTitle">ライブラリの初期化中...</div>
+    <div class="loader-desc" id="loaderDesc">
+      動画圧縮用のWebAssemblyエンジン（ffmpeg.wasm）を読み込んでいます。初回のみ数十秒かかる場合があります。
+    </div>
+  </div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header>
+      <div class="logo-container">
+        <svg class="logo-icon" viewBox="0 0 24 24">
+          <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4zM14 13h-3v3H9v-3H6v-2h3V8h2v3h3v2z"/>
+        </svg>
+        <span class="logo-text">Local Compressor</span>
+      </div>
+      <h1>LINE動画圧縮 PWA</h1>
+      <p class="subtitle">端末内だけで安全に圧縮・LINE送信に最適化</p>
+    </header>
+
+    <!-- STEP 1: Upload Area -->
+    <section id="stepUpload" class="card fade-in">
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" class="hidden-input" accept="video/*">
+        <div class="upload-icon-wrapper">
+          <svg class="upload-icon" viewBox="0 0 24 24">
+            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+          </svg>
+        </div>
+        <p class="upload-text">動画ファイルをタップして選択</p>
+        <p class="upload-subtext">ドラッグ＆ドロップでも読み込めます</p>
+      </div>
+    </section>
+
+    <!-- STEP 2: Settings & Preview -->
+    <section id="stepConfigure" class="card fade-in hidden">
+      <div class="video-preview-wrapper">
+        <video id="inputVideoPreview" class="video-preview" controls playsinline></video>
+      </div>
+
+      <div class="meta-grid">
+        <div class="meta-item">
+          <div class="meta-label">元のサイズ</div>
+          <div class="meta-value" id="originalSizeVal">0.0 MB</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">再生時間</div>
+          <div class="meta-value" id="originalDurationVal">00:00</div>
+        </div>
+      </div>
+
+      <!-- Optimization Settings -->
+      <div class="control-group">
+        <div class="setting-row">
+          <div class="setting-label-row">
+            <span class="setting-label">目標ファイルサイズ</span>
+            <span class="setting-value-badge" id="targetSizeLabel">30 MB</span>
+          </div>
+          <input type="range" id="targetSizeRange" min="5" max="95" step="5" value="30">
+          <p class="settings-info">
+            ※ LINEトーク画面で快適に送受信できる推奨値は30MB以下です。
+          </p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label-row">
+            <span class="setting-label">計算された映像ビットレート</span>
+            <span class="setting-value-badge" id="calculatedBitrateLabel">自動計算中...</span>
+          </div>
+          <p class="settings-info" id="bitrateExplanation">
+            サイズと再生時間に基づいて最適な圧縮率を自動算出します。
+          </p>
+        </div>
+      </div>
+
+      <button id="startCompressBtn" class="btn btn-primary">
+        <svg style="width: 20px; height: 20px; fill: white;" viewBox="0 0 24 24">
+          <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM19 18H6c-2.21 0-4-1.79-4-4 0-2.05 1.53-3.76 3.56-3.97l1.07-.11.5-.95C8.08 7.14 9.94 6 12 6c2.62 0 4.88 1.86 5.39 4.43l.3 1.5 1.53.11c1.56.1 2.78 1.41 2.78 2.96 0 1.65-1.35 3-3 3zm-5.55-8h-2.9v3H7.5l4.5 4.5 4.5-4.5h-3.05z"/>
+        </svg>
+        動画圧縮を開始する
+      </button>
+      <button id="changeVideoBtn" class="btn btn-outline" style="margin-top: 12px;">動画を選び直す</button>
+    </section>
+
+    <!-- STEP 3: Progress -->
+    <section id="stepProgress" class="card fade-in hidden">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <div class="spinner" style="margin: 0 auto 16px;"></div>
+        <h3 style="font-size: 1.15rem; font-weight: 600;">動画をエンコードしています...</h3>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 6px; line-height: 1.4;">
+          ブラウザを閉じたり、別のタブに移動したりしないでください。<br>
+          (処理速度はスマートフォンのスペックに依存します)
+        </p>
+      </div>
+
+      <div class="progress-container">
+        <div class="progress-header">
+          <span class="progress-status" id="progressStatus">FFmpeg 処理中</span>
+          <span class="progress-percentage" id="progressPercent">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="time-elapsed" id="timeElapsed">経過時間: 0秒</div>
+      </div>
+    </section>
+
+    <!-- STEP 4: Completed -->
+    <section id="stepResult" class="card result-card fade-in hidden">
+      <div class="success-header">
+        <svg class="success-icon" viewBox="0 0 24 24">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+        圧縮が完了しました！
+      </div>
+
+      <div class="video-preview-wrapper">
+        <video id="outputVideoPreview" class="video-preview" controls playsinline></video>
+      </div>
+
+      <div class="comparison-grid">
+        <div class="comparison-col">
+          <span class="comparison-label">圧縮前</span>
+          <span class="comparison-value" id="beforeSizeVal">0 MB</span>
+        </div>
+        <div class="comparison-col">
+          <span class="comparison-label">圧縮後</span>
+          <span class="comparison-value" id="afterSizeVal">0 MB</span>
+        </div>
+        <div class="comparison-col">
+          <span class="comparison-label">削減率</span>
+          <span class="comparison-value reduced" id="reductionRatioVal">0%</span>
+          <span class="reduction-badge" id="reductionBadge">SAVE</span>
+        </div>
+      </div>
+
+      <button id="shareVideoBtn" class="btn btn-share">
+        <svg style="width: 20px; height: 20px; fill: white;" viewBox="0 0 24 24">
+          <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>
+        </svg>
+        動画を共有 / LINEで送る
+      </button>
+
+      <button id="downloadVideoBtn" class="btn btn-primary" style="background: var(--primary-gradient); box-shadow: 0 4px 15px var(--primary-glow); margin-bottom: 12px;">
+        <svg style="width: 20px; height: 20px; fill: white;" viewBox="0 0 24 24">
+          <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+        </svg>
+        端末に保存する
+      </button>
+
+      <button id="restartBtn" class="btn btn-outline">別の動画を圧縮する</button>
+    </section>
+  </div>
+
+  <!-- Toast Toast Notification -->
+  <div id="toast" class="toast">
+    <span id="toastMessage">メッセージ</span>
+  </div>
+
+  <!-- FFmpeg.wasm & helper scripts CDN -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js" crossorigin="anonymous"></script>
+  
+  <!-- Main Logic -->
+  <script src="app.js"></script>
+</body>
+</html>
