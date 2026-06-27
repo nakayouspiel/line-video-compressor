@@ -1,0 +1,51 @@
+name: Android Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. リポジトリのチェックアウト
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. Java 17 のセットアップ
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    # 3. Gradle のセットアップ (GitHub Actionsのランナー環境にGradleを準備)
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+
+    # 4. Gradle Wrapper がリポジトリにない場合に自動生成
+    - name: Generate Gradle Wrapper if missing
+      run: |
+        if [ ! -f gradlew ]; then
+          gradle wrapper --gradle-version 8.2
+        fi
+
+    # 5. 実行権限の付与
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    # 6. APKのビルド実行 (assembleDebug)
+    - name: Build debug APK
+      run: ./gradlew assembleDebug
+
+    # 7. 生成された APK ファイルを GitHub の Artifacts へアップロード
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: line-video-chiccha-kun-debug-apk
+        path: app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 7
