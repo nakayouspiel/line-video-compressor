@@ -30,9 +30,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegKitConfig
-import com.arthenica.ffmpegkit.ReturnCode
+import com.antonkarpenko.ffmpegkit.FFmpegKit
+import com.antonkarpenko.ffmpegkit.FFmpegKitConfig
+import com.antonkarpenko.ffmpegkit.ReturnCode
+import com.antonkarpenko.ffmpegkit.StatisticsCallback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -141,7 +142,7 @@ fun LineCompressorApp(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .maxHeight()
+                .fillMaxHeight()
                 .padding(bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -476,7 +477,7 @@ private suspend fun performCompression(
         }
 
         // Configure progress stats callback
-        FFmpegKitConfig.enableStatisticsCallback { stats ->
+        FFmpegKitConfig.enableStatisticsCallback(StatisticsCallback { stats ->
             if (totalDuration > 0) {
                 val timeInMilliseconds = stats.time.toDouble()
                 val totalTimeInMilliseconds = totalDuration * 1000.0
@@ -486,7 +487,7 @@ private suspend fun performCompression(
                 // Post progress back to UI main thread
                 onProgressUpdate(clampedProgress)
             }
-        }
+        })
 
         // Construct ffmpeg execution command args
         val cmd = mutableListOf(
