@@ -19,14 +19,7 @@
 </head>
 <body>
 
-  <!-- FFmpeg.wasm Loading Overlay (Worker Init Stage) -->
-  <div id="loaderOverlay" class="loader-overlay">
-    <div class="spinner"></div>
-    <div class="loader-title" id="loaderTitle">ちっちゃ君の準備中...</div>
-    <div class="loader-desc" id="loaderDesc">
-      動画をちっちゃくするプログラムを読み込んでいます。初回のみ十数秒かかる場合があります。（SharedArrayBuffer不要の安全モードで動作しています）
-    </div>
-  </div>
+  <!-- No more heavy WASM load overlay needed. App starts instantly! -->
 
   <div class="app-container">
     <!-- Header -->
@@ -112,7 +105,7 @@
     <section id="stepProgress" class="card fade-in hidden">
       <div style="text-align: center; margin-bottom: 20px;">
         <div class="spinner" style="margin: 0 auto 16px;"></div>
-        <h3 style="font-size: 1.15rem; font-weight: 600;">ちっちゃくしています...</h3>
+        <h3 style="font-size: 1.15rem; font-weight: 600;">クラウドでちっちゃくしています...</h3>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 6px; line-height: 1.4;">
           ブラウザを閉じたり、別のタブに移動したりしないでください。<br>
           (スリープ防止機能が作動しています。安全のためにこの画面のままお待ちください)
@@ -121,11 +114,12 @@
 
       <div class="progress-container">
         <div class="progress-header">
-          <span class="progress-status" id="progressStatus">エンコード処理中</span>
-          <span class="progress-percentage" id="progressPercent">0%</span>
+          <span class="progress-status" id="progressStatus">アップロード・処理中...</span>
+          <span class="progress-percentage" id="progressPercent">処理中</span>
         </div>
         <div class="progress-track">
-          <div class="progress-bar" id="progressBar"></div>
+          <!-- Indeterminate progress bar using css animation -->
+          <div class="progress-bar" id="progressBar" style="width: 100%;"></div>
         </div>
         <div class="time-elapsed" id="timeElapsed">経過時間: 0秒</div>
       </div>
@@ -176,7 +170,7 @@
     <span id="toastMessage">メッセージ</span>
   </div>
   
-  <!-- Main Logic (No more direct FFmpeg CDN loading in main thread) -->
+  <!-- Main Logic (Pure Web Client - No direct Wasm dependency in page) -->
   <script src="app.js"></script>
 </body>
 </html>

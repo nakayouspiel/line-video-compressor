@@ -31,12 +31,14 @@ let progressTimer = null;
 let startTime = 0;
 let wakeLock = null; // Wake Lock API参照用
 
+// Cloudflare WorkersのAPIエンドポイントURL (ご自身のWorkersのアドレスに変更してください)
+const CLOUDFLARE_WORKER_URL = 'https://line-video-chiccha-kun.nakayouspiel.workers.dev/';
+
 // DOM Elements
 const stepUpload = document.getElementById('stepUpload');
 const stepConfigure = document.getElementById('stepConfigure');
 const stepProgress = document.getElementById('stepProgress');
 const stepResult = document.getElementById('stepResult');
-const loaderOverlay = document.getElementById('loaderOverlay');
 
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
@@ -74,78 +76,7 @@ let compressedBlob = null;
 let compressedFileName = "compressed_line.mp4";
 
 // ----------------------------------------------------
-// 3. Web Worker Connection (ffmpeg.wasm Background Run)
-// ----------------------------------------------------
-// Web Worker の作成
-const worker = new Worker('worker.js');
-
-// 起動時に Worker へ FFmpeg の初期化を指示
-window.addEventListener('DOMContentLoaded', () => {
-  worker.postMessage({ type: 'init' });
-});
-
-// Worker からのメッセージ受信ハンドリング
-worker.onmessage = function(e) {
-  const { type, data } = e.data;
-
-  if (type === 'ready') {
-    // 初期化完了時、ローディングを閉じる
-    loaderOverlay.classList.add('hidden');
-    showToast("準備が完了しました！");
-  } 
-  
-  else if (type === 'progress') {
-    // 圧縮進行状況の反映
-    const percentage = data;
-    progressBar.style.width = `${percentage}%`;
-    progressPercent.textContent = `${percentage}%`;
-  } 
-  
-  else if (type === 'done') {
-    // 圧縮完了時
-    clearInterval(progressTimer);
-    releaseWakeLock(); // 画面スリープ制限を解除
-
-    // 返却された ArrayBuffer から Blob を作成
-    compressedBlob = new Blob([data], { type: 'video/mp4' });
-
-    // 結果の解析と表示
-    const originalSizeMB = originalFile.size / (1024 * 1024);
-    const compressedSizeMB = compressedBlob.size / (1024 * 1024);
-    const reductionRatio = Math.max(0, Math.round((1 - (compressedSizeMB / originalSizeMB)) * 100));
-
-    beforeSizeVal.textContent = `${originalSizeMB.toFixed(1)} MB`;
-    afterSizeVal.textContent = `${compressedSizeMB.toFixed(1)} MB`;
-    reductionRatioVal.textContent = `${reductionRatio}%`;
-
-    if (reductionRatio > 0) {
-      reductionBadge.textContent = 'SAVE';
-      reductionBadge.style.background = 'rgba(16, 185, 129, 0.15)';
-      reductionBadge.style.color = '#34d399';
-    } else {
-      reductionBadge.textContent = 'SAME';
-      reductionBadge.style.background = 'rgba(239, 68, 68, 0.15)';
-      reductionBadge.style.color = '#f87171';
-    }
-
-    outputVideoPreview.src = URL.createObjectURL(compressedBlob);
-
-    switchStep(stepProgress, stepResult);
-    showToast("ちっちゃくなりました！");
-  } 
-  
-  else if (type === 'error') {
-    // エラー発生時
-    clearInterval(progressTimer);
-    releaseWakeLock(); // 画面スリープ制限を解除
-    
-    alert(data);
-    switchStep(stepProgress, stepConfigure);
-  }
-};
-
-// ----------------------------------------------------
-// 4. Wake Lock API (スリープ防止処理)
+// 3. Wake Lock API (スリープ防止処理)
 // ----------------------------------------------------
 async function requestWakeLock() {
   if ('wakeLock' in navigator) {
@@ -169,7 +100,7 @@ function releaseWakeLock() {
 }
 
 // ----------------------------------------------------
-// 5. File Handling & Error Checks
+// 4. File Handling & Error Checks
 // ----------------------------------------------------
 dropzone.addEventListener('click', () => fileInput.click());
 
@@ -234,7 +165,7 @@ function handleVideoSelect(file) {
 }
 
 // ----------------------------------------------------
-// 6. Mode Selection & Bitrate Calculation
+// 5. Mode Selection & Bitrate Calculation
 // ----------------------------------------------------
 modeHighBtn.addEventListener('click', () => {
   targetSize = 30;
@@ -279,7 +210,7 @@ function calculateOptimalBitrate() {
 }
 
 // ----------------------------------------------------
-// 7. Video Encoding Trigger (Worker Delegated)
+// 6. Cloudflare Workers API Request (Video Offloading)
 // ----------------------------------------------------
 async function compressVideo() {
   if (!originalFile) {
@@ -289,9 +220,9 @@ async function compressVideo() {
 
   // 画面遷移
   switchStep(stepConfigure, stepProgress);
-  progressStatus.textContent = '動画ファイルを読み込み中...';
-  progressBar.style.width = '0%';
-  progressPercent.textContent = '0%';
+  progressStatus.textContent = '動画データを送信中...';
+  progressPercent.textContent = '送信中';
+  progressBar.style.width = '100%';
   
   let elapsedSeconds = 0;
   timeElapsed.textContent = `経過時間: 0秒`;
@@ -300,45 +231,71 @@ async function compressVideo() {
   progressTimer = setInterval(() => {
     elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
     timeElapsed.textContent = `経過時間: ${elapsedSeconds}秒`;
+    if (elapsedSeconds > 10) {
+      progressStatus.textContent = 'クラウドでちっちゃくエンコード中...';
+      progressPercent.textContent = '処理中';
+    }
   }, 1000);
 
   try {
     // スリープ防止 (Wake Lock) を有効化
     await requestWakeLock();
 
+    // FormData の構築
+    const formData = new FormData();
+    formData.append('video', originalFile);
+    formData.append('targetSize', targetSize);
+    formData.append('bitrate', calculatedBitrate);
+
     compressedFileName = `chiccha_${Date.now()}.mp4`;
 
-    // FileReader を使って ArrayBuffer としてロード
-    const reader = new FileReader();
-    
-    reader.onload = function(e) {
-      const arrayBuffer = e.target.result;
-      
-      progressStatus.textContent = 'ちっちゃくする処理を実行中...';
-      
-      // Worker 側へバッファを送信 (Transferable Objects を使用してメモリオーバーヘッドを回避)
-      worker.postMessage({
-        type: 'compress',
-        data: {
-          file: arrayBuffer,
-          bitrate: calculatedBitrate,
-          targetSize: targetSize
-        }
-      }, [arrayBuffer]);
-    };
+    // Cloudflare Workers の API に POST リクエストを送信
+    const response = await fetch(CLOUDFLARE_WORKER_URL, {
+      method: 'POST',
+      body: formData
+    });
 
-    reader.onerror = function() {
-      throw new Error("ファイルの読み取りに失敗しました。");
-    };
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'サーバー処理エラー');
+    }
 
-    reader.readAsArrayBuffer(originalFile);
+    // レスポンスから生の動画Blobを取得
+    compressedBlob = await response.blob();
+
+    clearInterval(progressTimer);
+    releaseWakeLock(); // スリープ制限を解除
+
+    // 圧縮結果の解析
+    const originalSizeMB = originalFile.size / (1024 * 1024);
+    const compressedSizeMB = compressedBlob.size / (1024 * 1024);
+    const reductionRatio = Math.max(0, Math.round((1 - (compressedSizeMB / originalSizeMB)) * 100));
+
+    beforeSizeVal.textContent = `${originalSizeMB.toFixed(1)} MB`;
+    afterSizeVal.textContent = `${compressedSizeMB.toFixed(1)} MB`;
+    reductionRatioVal.textContent = `${reductionRatio}%`;
+
+    if (reductionRatio > 0) {
+      reductionBadge.textContent = 'SAVE';
+      reductionBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+      reductionBadge.style.color = '#34d399';
+    } else {
+      reductionBadge.textContent = 'SAME';
+      reductionBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+      reductionBadge.style.color = '#f87171';
+    }
+
+    outputVideoPreview.src = URL.createObjectURL(compressedBlob);
+
+    switchStep(stepProgress, stepResult);
+    showToast("ちっちゃくなりました！");
 
   } catch (error) {
-    console.error("Compression process failed:", error);
+    console.error("Compression offloading failed:", error);
     clearInterval(progressTimer);
     releaseWakeLock(); // スリープ制限を解除
     
-    alert("ちっちゃくする処理でエラーが発生しました。");
+    alert(`ちっちゃくする処理でエラーが発生しました。\n詳細: ${error.message}`);
     switchStep(stepProgress, stepConfigure);
   }
 }
@@ -346,7 +303,7 @@ async function compressVideo() {
 startCompressBtn.addEventListener('click', compressVideo);
 
 // ----------------------------------------------------
-// 8. Downloading Logic
+// 7. Downloading Logic
 // ----------------------------------------------------
 function downloadVideo() {
   if (!compressedBlob) return;
@@ -365,7 +322,7 @@ function downloadVideo() {
 downloadVideoBtn.addEventListener('click', downloadVideo);
 
 // ----------------------------------------------------
-// 9. Navigation & Reset Logic
+// 8. Navigation & Reset Logic
 // ----------------------------------------------------
 function switchStep(fromStep, toStep) {
   fromStep.classList.add('hidden');
@@ -404,7 +361,7 @@ function resetState() {
 }
 
 // ----------------------------------------------------
-// 10. Toast Notification Helper
+// 9. Toast Notification Helper
 // ----------------------------------------------------
 function showToast(message) {
   toastMessage.textContent = message;
