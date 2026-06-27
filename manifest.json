@@ -1,7 +1,7 @@
 {
-  "name": "LINE動画圧縮 PWA",
-  "short_name": "LINE圧縮",
-  "description": "スマホ上で高速かつ安全に動画をLINE用に圧縮・変換するローカルWebアプリ",
+  "name": "ライン動画ちっちゃ君",
+  "short_name": "ちっちゃ君",
+  "description": "スマホ上で超シンプルに動画をLINE送信向けに最適圧縮するローカルWebアプリ",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",

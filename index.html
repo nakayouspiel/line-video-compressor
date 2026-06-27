@@ -3,23 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>LINE動画圧縮 PWA</title>
+  <title>ライン動画ちっちゃ君</title>
   
   <!-- PWA Settings -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0f172a">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="LINE動画圧縮">
+  <meta name="apple-mobile-web-app-title" content="ちっちゃ君">
   <link rel="apple-touch-icon" href="icon.png">
   
   <!-- SEO & Style Sheets -->
-  <meta name="description" content="スマートフォン上で動画をLINE送信向けに最適圧縮するPWAアプリ。外部に動画を送信せず、端末内だけで完結する安全なエンコーダーです。">
+  <meta name="description" content="スマートフォン上で動画をLINE送信向けに「超シンプル」に最適圧縮するPWAアプリ。外部に動画を送信せず、端末内だけで完結する安全なエンコーダーです。">
   <link rel="stylesheet" href="index.css">
 </head>
 <body>
-
-  <!-- No more heavy WASM loader needed -->
 
   <div class="app-container">
     <!-- Header -->
@@ -28,10 +26,10 @@
         <svg class="logo-icon" viewBox="0 0 24 24">
           <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4zM14 13h-3v3H9v-3H6v-2h3V8h2v3h3v2z"/>
         </svg>
-        <span class="logo-text">Local Compressor</span>
+        <span class="logo-text">ライン動画ちっちゃ君</span>
       </div>
-      <h1>LINE動画圧縮 PWA</h1>
-      <p class="subtitle">端末内だけで安全に圧縮・LINE送信に最適化</p>
+      <h1>ライン動画ちっちゃ君</h1>
+      <p class="subtitle">動画をLINEで送れるサイズに自動でぎゅっと圧縮！</p>
     </header>
 
     <!-- STEP 1: Upload Area -->
@@ -65,22 +63,25 @@
         </div>
       </div>
 
-      <!-- Optimization Settings -->
+      <!-- Optimization Settings (Buttons replace slider) -->
       <div class="control-group">
         <div class="setting-row">
-          <div class="setting-label-row">
-            <span class="setting-label">目標ファイルサイズ</span>
-            <span class="setting-value-badge" id="targetSizeLabel">30 MB</span>
+          <span class="setting-label" style="margin-bottom: 8px; display: inline-block;">ちっちゃさ（目標サイズ）</span>
+          <div class="mode-select-grid">
+            <button type="button" id="modeHigh" class="mode-btn active" data-size="15">
+              <span class="mode-title">高画質</span>
+              <span class="mode-desc">15MB以内 (おすすめ)</span>
+            </button>
+            <button type="button" id="modeFast" class="mode-btn" data-size="5">
+              <span class="mode-title">爆速・軽量</span>
+              <span class="mode-desc">5MB以内</span>
+            </button>
           </div>
-          <input type="range" id="targetSizeRange" min="5" max="95" step="5" value="30">
-          <p class="settings-info">
-            ※ LINEトーク画面で快適に送受信できる推奨値は30MB以下です。
-          </p>
         </div>
 
         <div class="setting-row">
           <div class="setting-label-row">
-            <span class="setting-label">目標の総ビットレート</span>
+            <span class="setting-label">計算された映像ビットレート</span>
             <span class="setting-value-badge" id="calculatedBitrateLabel">自動計算中...</span>
           </div>
           <p class="settings-info" id="bitrateExplanation">
@@ -102,10 +103,10 @@
     <section id="stepProgress" class="card fade-in hidden">
       <div style="text-align: center; margin-bottom: 20px;">
         <div class="spinner" style="margin: 0 auto 16px;"></div>
-        <h3 style="font-size: 1.15rem; font-weight: 600;">動画を圧縮しています...</h3>
+        <h3 style="font-size: 1.15rem; font-weight: 600;">ちっちゃくしています...</h3>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 6px; line-height: 1.4;">
           ブラウザを閉じたり、別のタブに移動したりしないでください。<br>
-          (端末内のメディアプロセッサーで直接圧縮しています)
+          (スマホ本体で直接エンコード処理しています)
         </p>
       </div>
 
@@ -127,7 +128,7 @@
         <svg class="success-icon" viewBox="0 0 24 24">
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
         </svg>
-        圧縮が完了しました！
+        ちっちゃくなりました！
       </div>
 
       <div class="video-preview-wrapper">
@@ -150,11 +151,12 @@
         </div>
       </div>
 
-      <button id="shareVideoBtn" class="btn btn-share">
-        <svg style="width: 20px; height: 20px; fill: white;" viewBox="0 0 24 24">
+      <!-- LINEへ送る（デカい共有ボタン） -->
+      <button id="shareVideoBtn" class="btn btn-share" style="padding: 20px; font-size: 1.15rem; border-radius: 20px;">
+        <svg style="width: 24px; height: 24px; fill: white;" viewBox="0 0 24 24">
           <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>
         </svg>
-        動画を共有 / LINEで送る
+        LINEへ送る (共有メニュー起動)
       </button>
 
       <button id="downloadVideoBtn" class="btn btn-primary" style="background: var(--primary-gradient); box-shadow: 0 4px 15px var(--primary-glow); margin-bottom: 12px;">
@@ -164,7 +166,7 @@
         端末に保存する
       </button>
 
-      <button id="restartBtn" class="btn btn-outline">別の動画を圧縮する</button>
+      <button id="restartBtn" class="btn btn-outline">別の動画をちっちゃくする</button>
     </section>
   </div>
 
@@ -172,8 +174,6 @@
   <div id="toast" class="toast">
     <span id="toastMessage">メッセージ</span>
   </div>
-
-  <!-- No scripts to load via CDN anymore! -->
   
   <!-- Main Logic -->
   <script src="app.js"></script>

@@ -8,7 +8,7 @@ if ('serviceWorker' in navigator) {
       if (newWorker) {
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            showToast("アプリアップデートを検出しました。再読み込み中...");
+            showToast("アプリの更新があります。再読み込み中...");
             setTimeout(() => { location.reload(); }, 1500);
           }
         });
@@ -18,11 +18,12 @@ if ('serviceWorker' in navigator) {
 }
 
 // ----------------------------------------------------
-// 2. Global State
+// 2. Global State & Settings
 // ----------------------------------------------------
 let originalFile = null;
 let originalDuration = 0; // 秒
 let calculatedBitrate = 0; // bps (MediaRecorder用)
+let targetSize = 15; // デフォルト 15MB
 let progressTimer = null;
 let startTime = 0;
 
@@ -39,8 +40,9 @@ const inputVideoPreview = document.getElementById('inputVideoPreview');
 const originalSizeVal = document.getElementById('originalSizeVal');
 const originalDurationVal = document.getElementById('originalDurationVal');
 
-const targetSizeRange = document.getElementById('targetSizeRange');
-const targetSizeLabel = document.getElementById('targetSizeLabel');
+// Mode buttons
+const modeHighBtn = document.getElementById('modeHigh');
+const modeFastBtn = document.getElementById('modeFast');
 const calculatedBitrateLabel = document.getElementById('calculatedBitrateLabel');
 const startCompressBtn = document.getElementById('startCompressBtn');
 const changeVideoBtn = document.getElementById('changeVideoBtn');
@@ -68,7 +70,7 @@ let compressedBlob = null;
 let compressedFileName = "compressed_line.mp4";
 
 // ----------------------------------------------------
-// 3. File Handling & Metadata Analysis
+// 3. File Handling & Error Checks
 // ----------------------------------------------------
 dropzone.addEventListener('click', () => fileInput.click());
 
@@ -85,10 +87,8 @@ dropzone.addEventListener('drop', (e) => {
   e.preventDefault();
   dropzone.classList.remove('dragover');
   const files = e.dataTransfer.files;
-  if (files.length > 0 && files[0].type.startsWith('video/')) {
+  if (files.length > 0) {
     handleVideoSelect(files[0]);
-  } else {
-    showToast("有効な動画ファイルを選択してください");
   }
 });
 
@@ -99,6 +99,13 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function handleVideoSelect(file) {
+  // 動画ファイル以外のファイルが選択された場合のエラーハンドリング
+  if (!file.type.startsWith('video/')) {
+    alert("動画ファイルを選んでね！");
+    fileInput.value = '';
+    return;
+  }
+
   originalFile = file;
   
   const sizeInMB = file.size / (1024 * 1024);
@@ -118,34 +125,38 @@ function handleVideoSelect(file) {
     
     inputVideoPreview.src = URL.createObjectURL(file);
     
-    const maxTarget = Math.max(5, Math.min(95, Math.floor(sizeInMB - 1)));
-    targetSizeRange.max = Math.max(maxTarget, 5);
-    if (sizeInMB <= 30) {
-      targetSizeRange.value = Math.max(5, Math.floor(sizeInMB * 0.7));
-    } else {
-      targetSizeRange.value = 30;
-    }
-    
+    // スライダー廃止に伴い、選択されたモードのビットレート計算を初期実行
     calculateOptimalBitrate();
     switchStep(stepUpload, stepConfigure);
   };
 
   tempVideo.onerror = function() {
-    showToast("動画メタデータの読み込みに失敗しました");
+    alert("動画の読み込みに失敗しちゃいました。別の動画を選んでみてね。");
   };
 }
 
 // ----------------------------------------------------
-// 4. LINE Optimization Logic & Bitrate Calculation
+// 4. Mode Selection & Bitrate Calculation
 // ----------------------------------------------------
+modeHighBtn.addEventListener('click', () => {
+  targetSize = 15;
+  modeHighBtn.classList.add('active');
+  modeFastBtn.classList.remove('active');
+  calculateOptimalBitrate();
+});
+
+modeFastBtn.addEventListener('click', () => {
+  targetSize = 5;
+  modeFastBtn.classList.add('active');
+  modeHighBtn.classList.remove('active');
+  calculateOptimalBitrate();
+});
+
 function calculateOptimalBitrate() {
-  const targetMB = parseInt(targetSizeRange.value);
-  targetSizeLabel.textContent = `${targetMB} MB`;
-  
   if (originalDuration <= 0) return;
 
   // 目標の総ビットレート (bps)
-  const totalBitrateBps = (targetMB * 8 * 1024 * 1024) / originalDuration;
+  const totalBitrateBps = (targetSize * 8 * 1024 * 1024) / originalDuration;
   
   // 音声に 128kbps (128,000 bps) 割り当て、残りを映像ビットレートにする
   const audioBitrateBps = 128000;
@@ -158,18 +169,16 @@ function calculateOptimalBitrate() {
   if (calculatedBitrate < minVideoBitrate) {
     calculatedBitrate = minVideoBitrate;
     calculatedBitrateLabel.textContent = `${Math.round(calculatedBitrate / 1000)} kbps (下限固定)`;
-    document.getElementById('bitrateExplanation').textContent = `動画が長いため、画質維持のため圧縮後のサイズが目標(${targetMB}MB)を超える可能性があります。`;
+    document.getElementById('bitrateExplanation').textContent = `動画が長いため、画質維持のため圧縮後のサイズが目標(${targetSize}MB)を超える可能性があります。`;
   } else if (calculatedBitrate > maxVideoBitrate) {
     calculatedBitrate = maxVideoBitrate;
     calculatedBitrateLabel.textContent = `${Math.round(calculatedBitrate / 1000)} kbps (上限固定)`;
-    document.getElementById('bitrateExplanation').textContent = `動画が短いため、最高画質設定で処理します。サイズは目標(${targetMB}MB)より大幅に小さくなります。`;
+    document.getElementById('bitrateExplanation').textContent = `動画が短いため、最高画質設定で処理します。サイズは目標(${targetSize}MB)より大幅に小さくなります。`;
   } else {
     calculatedBitrateLabel.textContent = `${Math.round(calculatedBitrate / 1000)} kbps`;
-    document.getElementById('bitrateExplanation').textContent = `目標サイズ ${targetMB}MB に収まるように最適化されています。`;
+    document.getElementById('bitrateExplanation').textContent = `目標サイズ ${targetSize}MB に収まるように最適化されています。`;
   }
 }
-
-targetSizeRange.addEventListener('input', calculateOptimalBitrate);
 
 // ----------------------------------------------------
 // 5. Video Encoding via Canvas + Web Audio API + MediaRecorder
@@ -187,7 +196,7 @@ async function compressVideo() {
 
   // 画面遷移
   switchStep(stepConfigure, stepProgress);
-  progressStatus.textContent = '圧縮処理を準備中...';
+  progressStatus.textContent = 'ちっちゃくする準備中...';
   progressBar.style.width = '0%';
   progressPercent.textContent = '0%';
   
@@ -299,7 +308,7 @@ async function compressVideo() {
 
         outputVideoPreview.src = URL.createObjectURL(compressedBlob);
 
-        // 共有メニューの利用可否
+        // 共有メニューの利用可否 (LINE送信ボタンの表示設定)
         const shareFile = new File([compressedBlob], compressedFileName, { type: compressedBlob.type });
         if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
           shareVideoBtn.classList.remove('hidden');
@@ -308,7 +317,7 @@ async function compressVideo() {
         }
 
         switchStep(stepProgress, stepResult);
-        showToast("圧縮が完了しました！");
+        showToast("ちっちゃくなりました！");
       };
 
       // 7. 描画ループ関数の定義
@@ -331,7 +340,7 @@ async function compressVideo() {
         // スマホの負荷を抑えつつ高速化するため、2.0倍速でエンコード処理を実施
         activeRecorderVideo.playbackRate = 2.0; 
         drawFrame();
-        progressStatus.textContent = '動画を圧縮エンコード中...';
+        progressStatus.textContent = '動画をちっちゃく加工中...';
       });
 
       // 9. 再生終了時のトリガー
@@ -345,7 +354,7 @@ async function compressVideo() {
     console.error("Compression process failed:", error);
     clearInterval(progressTimer);
     cancelAnimationFrame(activeAnimationFrameId);
-    showToast("圧縮中にエラーが発生しました。");
+    alert("ちっちゃくする処理の途中でエラーが発生しました。");
     switchStep(stepProgress, stepConfigure);
   }
 }
@@ -353,7 +362,7 @@ async function compressVideo() {
 startCompressBtn.addEventListener('click', compressVideo);
 
 // ----------------------------------------------------
-// 6. Sharing & Downloading Logic
+// 6. Sharing & Downloading Logic (LINEへ送る)
 // ----------------------------------------------------
 async function shareVideo() {
   if (!compressedBlob) return;
@@ -364,12 +373,12 @@ async function shareVideo() {
     if (navigator.share) {
       await navigator.share({
         files: [shareFile],
-        title: 'LINEで送る動画',
-        text: '圧縮した動画です。LINE等で共有できます。'
+        title: 'ちっちゃ君動画',
+        text: 'ライン動画ちっちゃ君でちっちゃくした動画だよ！LINEで送ってね。'
       });
       showToast("共有メニューを開きました");
     } else {
-      showToast("このブラウザは直接共有に対応していません");
+      alert("この端末は直接共有に対応していません。「端末に保存する」ボタンで保存してからLINEで送ってね！");
     }
   } catch (error) {
     if (error.name !== 'AbortError') {
@@ -390,7 +399,7 @@ function downloadVideo() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast("ダウンロードを開始しました");
+  showToast("端末への保存を開始しました");
 }
 
 shareVideoBtn.addEventListener('click', shareVideo);
