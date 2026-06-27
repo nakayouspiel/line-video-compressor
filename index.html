@@ -128,10 +128,10 @@
       border: 1px solid var(--border-color);
     }
 
-    /* 2択トグルボタン */
-    .mode-select-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
+    /* 目的別ボタンリスト（縦並び） */
+    .mode-select-column {
+      display: flex;
+      flex-direction: column;
       gap: 12px;
       margin-bottom: 8px;
     }
@@ -140,14 +140,15 @@
       background-color: #334155;
       border: 2px solid transparent;
       border-radius: 14px;
-      padding: 14px 8px;
+      padding: 14px;
       color: var(--text-main);
       cursor: pointer;
       display: flex;
       flex-direction: column;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
       gap: 4px;
+      text-align: left;
       transition: all 0.2s ease;
     }
 
@@ -163,7 +164,7 @@
     }
 
     .mode-desc {
-      font-size: 0.7rem;
+      font-size: 0.75rem;
       opacity: 0.85;
     }
 
@@ -341,18 +342,25 @@
         </p>
       </div>
 
-      <!-- 2択トグルボタン -->
+      <!-- 目的で選ぶ「3つのプリセットボタン」 -->
       <div id="modeSection">
-        <div class="mode-select-grid">
-          <button type="button" id="modeHigh" class="mode-btn active">
-            <span class="mode-title">高画質</span>
-            <span class="mode-desc">30MB以内 (おすすめ)</span>
+        <div class="mode-select-column">
+          <button type="button" id="modeNormal" class="mode-btn active">
+            <span class="mode-title">① LINEにそのまま送る (通常)</span>
+            <span class="mode-desc">スマホ視聴に最適な高画質</span>
           </button>
-          <button type="button" id="modeFast" class="mode-btn">
-            <span class="mode-title">爆速・軽量</span>
-            <span class="mode-desc">5MB以内 (縮小)</span>
+          <button type="button" id="modeTwitter" class="mode-btn">
+            <span class="mode-title">② X (Twitter) 用に140秒でカット</span>
+            <span class="mode-desc">先頭から140秒分を自動で切り出して圧縮</span>
+          </button>
+          <button type="button" id="modeLong" class="mode-btn">
+            <span class="mode-title">③ LINEで長編を送る (ファイル送信)</span>
+            <span class="mode-desc">長時間の動画を軽量に圧縮</span>
           </button>
         </div>
+        <p id="longVideoWarning" class="hidden" style="font-size: 0.8rem; color: #ef4444; font-weight: 700; margin-top: 8px; text-align: center;">
+          ⚠️ 処理にかなり時間がかかります！充電しながらお待ちください。
+        </p>
       </div>
 
       <!-- 動画選択エリア -->

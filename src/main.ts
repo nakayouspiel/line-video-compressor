@@ -4,17 +4,21 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 // グローバルステート
 let ffmpeg: FFmpeg | null = null;
 let selectedFile: File | null = null;
-let targetSizeMB: number = 30; // デフォルト 30MB
+let activePreset: 'normal' | 'twitter' | 'long' = 'normal';
 let videoDuration: number = 0;
 let progressTimer: number | null = null;
+let messageTimer: number | null = null;
 let startTime: number = 0;
 let wakeLock: WakeLockSentinel | null = null;
 let compressedBlob: Blob | null = null;
 let deferredPrompt: any = null;
 
 // DOM要素の参照
-const modeHigh = document.getElementById('modeHigh') as HTMLButtonElement;
-const modeFast = document.getElementById('modeFast') as HTMLButtonElement;
+const modeNormal = document.getElementById('modeNormal') as HTMLButtonElement;
+const modeTwitter = document.getElementById('modeTwitter') as HTMLButtonElement;
+const modeLong = document.getElementById('modeLong') as HTMLButtonElement;
+const longVideoWarning = document.getElementById('longVideoWarning') as HTMLParagraphElement;
+
 const dropzone = document.getElementById('dropzone') as HTMLDivElement;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
 const uploadText = document.getElementById('uploadText') as HTMLParagraphElement;
@@ -38,6 +42,15 @@ const installArea = document.getElementById('installArea') as HTMLDivElement;
 const installBtn = document.getElementById('installBtn') as HTMLButtonElement;
 const iosInstallGuide = document.getElementById('iosInstallGuide') as HTMLParagraphElement;
 
+// 安心メッセージのリスト
+const comfortMessages = [
+  "動画を丁寧にちっちゃくしています...",
+  "スマホの性能を使って頑張っています。画面を閉じずにお待ちください...",
+  "音ズレを防ぎながら、等倍でしっかりエンコードを行っています...",
+  "もう少しで終わります、そのままお待ちください...",
+  "ちっちゃくなったら、自動で保存ボタンが出現します..."
+];
+
 // 1. PWA インストール導線の制御 (iOS配慮含む)
 const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
 
@@ -52,7 +65,6 @@ if (!isStandalone) {
 }
 
 window.addEventListener('beforeinstallprompt', (e) => {
-  // Android等でホーム画面追加プロンプトが実行可能な場合
   e.preventDefault();
   deferredPrompt = e;
   if (!isStandalone) {
@@ -103,18 +115,27 @@ function preventUnload(e: BeforeUnloadEvent) {
   return e.returnValue;
 }
 
-// 4. 2択トグルのクリック制御
-modeHigh.addEventListener('click', () => {
-  targetSizeMB = 30;
-  modeHigh.classList.add('active');
-  modeFast.classList.remove('active');
-});
+// 4. 3つのプリセットボタンのクリック制御
+function selectPreset(preset: 'normal' | 'twitter' | 'long') {
+  activePreset = preset;
+  modeNormal.classList.remove('active');
+  modeTwitter.classList.remove('active');
+  modeLong.classList.remove('active');
+  longVideoWarning.classList.add('hidden');
 
-modeFast.addEventListener('click', () => {
-  targetSizeMB = 5;
-  modeFast.classList.add('active');
-  modeHigh.classList.remove('active');
-});
+  if (preset === 'normal') {
+    modeNormal.classList.add('active');
+  } else if (preset === 'twitter') {
+    modeTwitter.classList.add('active');
+  } else if (preset === 'long') {
+    modeLong.classList.add('active');
+    longVideoWarning.classList.remove('hidden');
+  }
+}
+
+modeNormal.addEventListener('click', () => selectPreset('normal'));
+modeTwitter.addEventListener('click', () => selectPreset('twitter'));
+modeLong.addEventListener('click', () => selectPreset('long'));
 
 // 5. 動画選択・ドロップエリアの制御
 dropzone.addEventListener('click', () => fileInput.click());
@@ -169,20 +190,16 @@ function handleFileSelection(file: File) {
 
     const min = Math.floor(videoDuration / 60);
     const sec = Math.floor(videoDuration % 60);
-    
-    let durationText = '';
-    if (min > 0) {
-      durationText = `${min}分${sec}秒`;
-    } else {
-      durationText = `${sec}秒`;
-    }
+    const durationText = `${min}分${sec.toString().padStart(2, '0')}秒`;
 
     uploadText.textContent = '動画変更';
     uploadSubtext.textContent = 'タップすると別の動画を選び直せます';
     fileInfo.classList.remove('hidden');
+    
     // 英数字のファイル名はフールプルーフのために一切見せず、容量と長さだけを表示する
     fileInfo.textContent = `元の動画: ${sizeMB.toFixed(1)}MB / ${durationText}`;
     dropzone.classList.add('has-file');
+    
     // 読み込みがすべて正常終了したので、圧縮ボタンを有効にする
     startCompressBtn.removeAttribute('disabled');
   };
@@ -219,8 +236,9 @@ async function startCompression() {
   window.addEventListener('beforeunload', preventUnload);
 
   // UIを処理中モードへロック
-  modeHigh.setAttribute('disabled', 'true');
-  modeFast.setAttribute('disabled', 'true');
+  modeNormal.setAttribute('disabled', 'true');
+  modeTwitter.setAttribute('disabled', 'true');
+  modeLong.setAttribute('disabled', 'true');
   dropzone.style.pointerEvents = 'none';
   startCompressBtn.setAttribute('disabled', 'true');
   progressSection.classList.remove('hidden');
@@ -228,7 +246,14 @@ async function startCompression() {
 
   progressPercent.textContent = '0%';
   progressBar.style.width = '0%';
-  progressStatus.textContent = '準備中...';
+  progressStatus.textContent = comfortMessages[0];
+
+  // 安心メッセージのローテーションタイマー開始
+  let msgIdx = 0;
+  messageTimer = window.setInterval(() => {
+    msgIdx = (msgIdx + 1) % comfortMessages.length;
+    progressStatus.textContent = comfortMessages[msgIdx];
+  }, 4000);
 
   // 経過時間カウントの開始
   startTime = Date.now();
@@ -250,41 +275,37 @@ async function startCompression() {
       const percentage = Math.min(99, Math.round(progress * 100));
       progressPercent.textContent = `${percentage}%`;
       progressBar.style.width = `${percentage}%`;
-      progressStatus.textContent = 'ちっちゃく加工中...';
     });
 
     // 仮想FSに入力動画ファイルを書き込み
     await instance.writeFile('input.mp4', await fetchFile(selectedFile));
-
-    // 目標サイズに合わせたビデオビットレートの最適化計算 (音声128kを除外)
-    const totalBitrateKbps = (targetSizeMB * 8 * 1024) / videoDuration;
-    const calculatedVideoBitrate = Math.round(totalBitrateKbps - 128).coerceIn(150, 4000);
 
     // FFmpeg引数 (等倍速、音声保持)
     const args = [
       '-i', 'input.mp4',
       '-vcodec', 'libx264',
       '-acodec', 'aac',
-      '-b:v', `${calculatedVideoBitrate}k`,
       '-b:a', '128k',
       '-pix_fmt', 'yuv420p',
       '-preset', 'fast',
       '-movflags', '+faststart'
     ];
 
-    // 5MB軽量モード選択時は解像度リサイズを挿入
-    if (targetSizeMB === 5) {
-      args.push('-vf', 'scale=640:-2');
+    // 各プリセットによる分岐処理
+    if (activePreset === 'normal') {
+      args.push('-vf', 'scale=1280:-2', '-crf', '28');
+    } else if (activePreset === 'twitter') {
+      args.push('-t', '140', '-vf', 'scale=1280:-2', '-crf', '28');
+    } else if (activePreset === 'long') {
+      args.push('-vf', 'scale=854:-2', '-crf', '32');
     }
 
     args.push('output.mp4');
 
     // エンコードの開始
-    progressStatus.textContent = 'エンコードを実行中...';
     await instance.exec(args);
 
     // 圧縮後のバイナリを仮想FSから読み出し
-    progressStatus.textContent = '最終出力ファイルを作成中...';
     const outputData = await instance.readFile('output.mp4');
     
     // SharedArrayBufferの型エラーを防ぎつつBlobへ変換
@@ -300,6 +321,7 @@ async function startCompression() {
 
     // リフレッシュ・後処理
     if (progressTimer) clearInterval(progressTimer);
+    if (messageTimer) clearInterval(messageTimer);
     window.removeEventListener('beforeunload', preventUnload);
     releaseWakeLock();
 
@@ -318,6 +340,7 @@ async function startCompression() {
     alert('圧縮処理中にエラーが発生しました。別の動画を試すか、再度やり直してください。');
     
     if (progressTimer) clearInterval(progressTimer);
+    if (messageTimer) clearInterval(messageTimer);
     window.removeEventListener('beforeunload', preventUnload);
     releaseWakeLock();
     resetUI();
@@ -360,13 +383,16 @@ function resetUI() {
   videoDuration = 0;
   fileInput.value = '';
   
+  selectPreset('normal');
+  
   uploadText.textContent = '① 動画を選ぶ';
   uploadSubtext.textContent = 'タップして動画ファイルを選択してください';
   fileInfo.classList.add('hidden');
   dropzone.classList.remove('has-file');
   
-  modeHigh.removeAttribute('disabled');
-  modeFast.removeAttribute('disabled');
+  modeNormal.removeAttribute('disabled');
+  modeTwitter.removeAttribute('disabled');
+  modeLong.removeAttribute('disabled');
   dropzone.style.pointerEvents = 'auto';
   startCompressBtn.setAttribute('disabled', 'true');
   
