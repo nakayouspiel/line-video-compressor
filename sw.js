@@ -1,4 +1,4 @@
-const CACHE_NAME = "line-video-compressor-v4";
+const CACHE_NAME = "line-video-compressor-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -34,11 +34,10 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// 通常のキャッシュ優先戦略（セキュアヘッダーの変更などは行わない）
+// 通常のキャッシュ優先戦略
 self.addEventListener("fetch", (event) => {
   const url = event.request.url;
 
-  // chrome-extensionなどのリクエストを除外
   if (!url.startsWith(self.location.origin) && !url.startsWith("https://fonts.googleapis.com") && !url.startsWith("https://fonts.gstatic.com")) {
     return;
   }

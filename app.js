@@ -1,19 +1,23 @@
 // ----------------------------------------------------
-// 1. PWA Service Worker Ready & Update Notification
+// 1. PWA Service Worker Registration
 // ----------------------------------------------------
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.ready.then(reg => {
-    reg.addEventListener('updatefound', () => {
-      const newWorker = reg.installing;
-      if (newWorker) {
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            showToast("アプリの更新があります。再読み込み中...");
-            setTimeout(() => { location.reload(); }, 1500);
-          }
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => {
+        console.log('Service Worker registered successfully:', reg.scope);
+        // 新しいサービスワーカーの有無を確認して更新を促す
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              showToast("アプリの更新があります。再読み込み中...");
+              setTimeout(() => { location.reload(); }, 1500);
+            }
+          });
         });
-      }
-    });
+      })
+      .catch(err => console.error('Service Worker registration failed:', err));
   });
 }
 
@@ -22,10 +26,18 @@ if ('serviceWorker' in navigator) {
 // ----------------------------------------------------
 let originalFile = null;
 let originalDuration = 0; // 秒
-let calculatedBitrate = 0; // bps (MediaRecorder用)
+let calculatedBitrate = 0; // kbps
 let targetSize = 15; // デフォルト 15MB
 let progressTimer = null;
 let startTime = 0;
+
+// ffmpeg.wasm v0.11.6 の初期設定 (グローバル変数 FFmpeg より取得)
+const { createFFmpeg, fetchFile } = FFmpeg;
+const ffmpeg = createFFmpeg({
+  log: true,
+  // シングルスレッド対応コアを明示指定 (これでSharedArrayBufferおよびCOOP/COEP制限を完全回避)
+  corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js'
+});
 
 // DOM Elements
 const stepUpload = document.getElementById('stepUpload');
@@ -58,19 +70,45 @@ const afterSizeVal = document.getElementById('afterSizeVal');
 const reductionRatioVal = document.getElementById('reductionRatioVal');
 const reductionBadge = document.getElementById('reductionBadge');
 
-const shareVideoBtn = document.getElementById('shareVideoBtn');
 const downloadVideoBtn = document.getElementById('downloadVideoBtn');
 const restartBtn = document.getElementById('restartBtn');
 
 const toast = document.getElementById('toast');
 const toastMessage = document.getElementById('toastMessage');
 
-// Output Blob reference for sharing/downloading
+// Output Blob reference for downloading
 let compressedBlob = null;
 let compressedFileName = "compressed_line.mp4";
 
 // ----------------------------------------------------
-// 3. File Handling & Error Checks
+// 3. Initialize FFmpeg.wasm (Single Thread)
+// ----------------------------------------------------
+async function initFFmpeg() {
+  try {
+    // 進行状況の監視を設定
+    ffmpeg.setProgress(({ ratio }) => {
+      const percentage = Math.round(ratio * 100);
+      progressBar.style.width = `${percentage}%`;
+      progressPercent.textContent = `${percentage}%`;
+    });
+
+    // WASMモジュールのロード
+    await ffmpeg.load();
+
+    document.getElementById('loaderOverlay').classList.add('hidden');
+    showToast("準備が完了しました！");
+  } catch (error) {
+    console.error("FFmpeg initialization failed:", error);
+    document.getElementById('loaderTitle').textContent = "準備に失敗しました";
+    document.getElementById('loaderDesc').innerHTML = `<span style="color: var(--error-color)">エラー: ちっちゃくするプログラムのロード中に問題が発生しました。もう一度再読み込みをお試しください。</span>`;
+  }
+}
+
+// アプリ起動時にFFmpegを初期化
+window.addEventListener('DOMContentLoaded', initFFmpeg);
+
+// ----------------------------------------------------
+// 4. File Handling & Error Checks
 // ----------------------------------------------------
 dropzone.addEventListener('click', () => fileInput.click());
 
@@ -136,7 +174,7 @@ function handleVideoSelect(file) {
 }
 
 // ----------------------------------------------------
-// 4. Mode Selection & Bitrate Calculation
+// 5. Mode Selection & Bitrate Calculation
 // ----------------------------------------------------
 modeHighBtn.addEventListener('click', () => {
   targetSize = 15;
@@ -155,48 +193,43 @@ modeFastBtn.addEventListener('click', () => {
 function calculateOptimalBitrate() {
   if (originalDuration <= 0) return;
 
-  // 目標の総ビットレート (bps)
-  const totalBitrateBps = (targetSize * 8 * 1024 * 1024) / originalDuration;
+  // 目標の総ビットレート (kbps)
+  const totalBitrateKbps = (targetSize * 8 * 1024) / originalDuration;
   
-  // 音声に 128kbps (128,000 bps) 割り当て、残りを映像ビットレートにする
-  const audioBitrateBps = 128000;
-  calculatedBitrate = Math.round(totalBitrateBps - audioBitrateBps);
+  // 音声に 128kbps 割り当て、残りを映像ビットレートにする
+  const audioBitrateKbps = 128;
+  calculatedBitrate = Math.round(totalBitrateKbps - audioBitrateKbps);
   
-  // 映像ビットレートの安全制限 (300kbps〜4000kbps)
-  const minVideoBitrate = 300000;
-  const maxVideoBitrate = 4000000;
+  // 映像ビットレートの安全制限 (150kbps〜4000kbps)
+  const minVideoBitrate = 150;
+  const maxVideoBitrate = 4000;
   
   if (calculatedBitrate < minVideoBitrate) {
     calculatedBitrate = minVideoBitrate;
-    calculatedBitrateLabel.textContent = `${Math.round(calculatedBitrate / 1000)} kbps (下限固定)`;
+    calculatedBitrateLabel.textContent = `${calculatedBitrate} kbps (下限固定)`;
     document.getElementById('bitrateExplanation').textContent = `動画が長いため、画質維持のため圧縮後のサイズが目標(${targetSize}MB)を超える可能性があります。`;
   } else if (calculatedBitrate > maxVideoBitrate) {
     calculatedBitrate = maxVideoBitrate;
-    calculatedBitrateLabel.textContent = `${Math.round(calculatedBitrate / 1000)} kbps (上限固定)`;
+    calculatedBitrateLabel.textContent = `${calculatedBitrate} kbps (上限固定)`;
     document.getElementById('bitrateExplanation').textContent = `動画が短いため、最高画質設定で処理します。サイズは目標(${targetSize}MB)より大幅に小さくなります。`;
   } else {
-    calculatedBitrateLabel.textContent = `${Math.round(calculatedBitrate / 1000)} kbps`;
+    calculatedBitrateLabel.textContent = `${calculatedBitrate} kbps`;
     document.getElementById('bitrateExplanation').textContent = `目標サイズ ${targetSize}MB に収まるように最適化されています。`;
   }
 }
 
 // ----------------------------------------------------
-// 5. Video Encoding via Canvas + Web Audio API + MediaRecorder
+// 6. Video Encoding via FFmpeg (Single Thread Mode)
 // ----------------------------------------------------
-let activeAudioCtx = null;
-let activeRecorderVideo = null;
-let activeRecorder = null;
-let activeAnimationFrameId = null;
-
 async function compressVideo() {
-  if (!originalFile) {
-    showToast("ファイルが選択されていません");
+  if (!ffmpeg || !originalFile) {
+    showToast("プログラムが準備できていません");
     return;
   }
 
   // 画面遷移
   switchStep(stepConfigure, stepProgress);
-  progressStatus.textContent = 'ちっちゃくする準備中...';
+  progressStatus.textContent = '動画ファイルを準備中...';
   progressBar.style.width = '0%';
   progressPercent.textContent = '0%';
   
@@ -210,151 +243,71 @@ async function compressVideo() {
   }, 1000);
 
   try {
-    // 1. 非表示のビデオ要素を生成してロード
-    activeRecorderVideo = document.createElement('video');
-    activeRecorderVideo.src = URL.createObjectURL(originalFile);
-    activeRecorderVideo.playsInline = true;
-    activeRecorderVideo.muted = false; // 音声をキャプチャするためにmuted=false
-    activeRecorderVideo.volume = 0.001; // 再生音が聞こえないように音量を極小に設定
+    const inputFileName = 'input.mp4';
+    const outputFileName = 'output.mp4';
+    compressedFileName = `chiccha_${Date.now()}.mp4`;
 
-    // 2. 映像描画用キャンバスの設定
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+    // 1. ファイルをWASM仮想メモリへ書き込み
+    ffmpeg.FS('writeFile', inputFileName, await fetchFile(originalFile));
+    progressStatus.textContent = '動画をちっちゃく加工中...';
 
-    // 3. メタデータロード完了時のメイン処理
-    activeRecorderVideo.onloadedmetadata = () => {
-      canvas.width = activeRecorderVideo.videoWidth;
-      canvas.height = activeRecorderVideo.videoHeight;
-      
-      // 4. Web Audio APIの設定（無音で音声ストリームをキャプチャ）
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      activeAudioCtx = new AudioContextClass();
-      
-      const source = activeAudioCtx.createMediaElementSource(activeRecorderVideo);
-      const dest = activeAudioCtx.createMediaStreamDestination();
-      source.connect(dest); // キャプチャ用へ接続
-      
-      // スピーカー出力用のゲインを0にする（無音化の徹底）
-      const gainNode = activeAudioCtx.createGain();
-      gainNode.gain.value = 0;
-      source.connect(gainNode).connect(activeAudioCtx.destination);
+    // 2. FFmpegを実行（等倍速・音声ありの正しい圧縮）
+    await ffmpeg.run(
+      '-i', inputFileName,
+      '-vcodec', 'libx264',
+      '-acodec', 'aac',
+      '-b:v', `${calculatedBitrate}k`,
+      '-b:a', '128k',
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'fast',
+      '-movflags', '+faststart',
+      outputFileName
+    );
 
-      // 5. ストリームの結合 (Canvas映像 30fps + Web Audio音声)
-      const videoStream = canvas.captureStream(30);
-      const combinedStream = new MediaStream();
-      
-      videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
-      dest.stream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+    progressStatus.textContent = '処理を完了しています...';
 
-      // 6. MediaRecorderの初期化
-      let options = {
-        mimeType: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
-        videoBitsPerSecond: calculatedBitrate,
-        audioBitsPerSecond: 128000
-      };
+    // 3. 圧縮後のファイルを仮想メモリから読み込み
+    const data = ffmpeg.FS('readFile', outputFileName);
+    compressedBlob = new Blob([data.buffer], { type: 'video/mp4' });
 
-      // ブラウザの対応状況に応じたフォールバック
-      if (MediaRecorder.isTypeSupported(options.mimeType)) {
-        activeRecorder = new MediaRecorder(combinedStream, options);
-      } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-        activeRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/mp4', videoBitsPerSecond: calculatedBitrate });
-      } else if (MediaRecorder.isTypeSupported('video/webm; codecs=h264')) {
-        activeRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm; codecs=h264', videoBitsPerSecond: calculatedBitrate });
-      } else if (MediaRecorder.isTypeSupported('video/webm')) {
-        activeRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm', videoBitsPerSecond: calculatedBitrate });
-      } else {
-        activeRecorder = new MediaRecorder(combinedStream, { videoBitsPerSecond: calculatedBitrate });
-      }
+    // 4. メモリ解放
+    try {
+      ffmpeg.FS('unlink', inputFileName);
+      ffmpeg.FS('unlink', outputFileName);
+    } catch (e) {
+      console.warn("Clean up failed:", e);
+    }
 
-      // ファイル拡張子の動的決定
-      const extension = activeRecorder.mimeType.includes('webm') ? 'webm' : 'mp4';
-      compressedFileName = `compressed_${Date.now()}_line.${extension}`;
+    clearInterval(progressTimer);
 
-      const chunks = [];
-      activeRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunks.push(e.data);
-        }
-      };
+    // 圧縮結果の解析
+    const originalSizeMB = originalFile.size / (1024 * 1024);
+    const compressedSizeMB = compressedBlob.size / (1024 * 1024);
+    const reductionRatio = Math.max(0, Math.round((1 - (compressedSizeMB / originalSizeMB)) * 100));
 
-      activeRecorder.onstop = () => {
-        // タイマーと描画ループのクリーンアップ
-        clearInterval(progressTimer);
-        cancelAnimationFrame(activeAnimationFrameId);
-        if (activeAudioCtx && activeAudioCtx.state !== 'closed') {
-          activeAudioCtx.close();
-        }
-        
-        compressedBlob = new Blob(chunks, { type: activeRecorder.mimeType });
-        
-        // 圧縮結果の解析
-        const originalSizeMB = originalFile.size / (1024 * 1024);
-        const compressedSizeMB = compressedBlob.size / (1024 * 1024);
-        const reductionRatio = Math.max(0, Math.round((1 - (compressedSizeMB / originalSizeMB)) * 100));
+    beforeSizeVal.textContent = `${originalSizeMB.toFixed(1)} MB`;
+    afterSizeVal.textContent = `${compressedSizeMB.toFixed(1)} MB`;
+    reductionRatioVal.textContent = `${reductionRatio}%`;
+    
+    if (reductionRatio > 0) {
+      reductionBadge.textContent = 'SAVE';
+      reductionBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+      reductionBadge.style.color = '#34d399';
+    } else {
+      reductionBadge.textContent = 'SAME';
+      reductionBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+      reductionBadge.style.color = '#f87171';
+    }
 
-        beforeSizeVal.textContent = `${originalSizeMB.toFixed(1)} MB`;
-        afterSizeVal.textContent = `${compressedSizeMB.toFixed(1)} MB`;
-        reductionRatioVal.textContent = `${reductionRatio}%`;
-        
-        if (reductionRatio > 0) {
-          reductionBadge.textContent = 'SAVE';
-          reductionBadge.style.background = 'rgba(16, 185, 129, 0.15)';
-          reductionBadge.style.color = '#34d399';
-        } else {
-          reductionBadge.textContent = 'SAME';
-          reductionBadge.style.background = 'rgba(239, 68, 68, 0.15)';
-          reductionBadge.style.color = '#f87171';
-        }
+    outputVideoPreview.src = URL.createObjectURL(compressedBlob);
 
-        outputVideoPreview.src = URL.createObjectURL(compressedBlob);
+    switchStep(stepProgress, stepResult);
+    showToast("ちっちゃくなりました！");
 
-        // 共有メニューの利用可否 (LINE送信ボタンの表示設定)
-        const shareFile = new File([compressedBlob], compressedFileName, { type: compressedBlob.type });
-        if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
-          shareVideoBtn.classList.remove('hidden');
-        } else {
-          shareVideoBtn.classList.add('hidden');
-        }
-
-        switchStep(stepProgress, stepResult);
-        showToast("ちっちゃくなりました！");
-      };
-
-      // 7. 描画ループ関数の定義
-      const drawFrame = () => {
-        if (activeRecorderVideo.paused || activeRecorderVideo.ended) return;
-        ctx.drawImage(activeRecorderVideo, 0, 0, canvas.width, canvas.height);
-        
-        // 進捗率の計算と更新 (currentTime / duration)
-        const progress = Math.min(99, Math.round((activeRecorderVideo.currentTime / originalDuration) * 100));
-        progressBar.style.width = `${progress}%`;
-        progressPercent.textContent = `${progress}%`;
-        
-        activeAnimationFrameId = requestAnimationFrame(drawFrame);
-      };
-
-      // 8. 録画と再生の開始
-      activeRecorder.start();
-      activeAudioCtx.resume().then(() => {
-        activeRecorderVideo.play();
-        // スマホの負荷を抑えつつ高速化するため、2.0倍速でエンコード処理を実施
-        activeRecorderVideo.playbackRate = 2.0; 
-        drawFrame();
-        progressStatus.textContent = '動画をちっちゃく加工中...';
-      });
-
-      // 9. 再生終了時のトリガー
-      activeRecorderVideo.onended = () => {
-        if (activeRecorder && activeRecorder.state !== 'inactive') {
-          activeRecorder.stop();
-        }
-      };
-    };
   } catch (error) {
     console.error("Compression process failed:", error);
     clearInterval(progressTimer);
-    cancelAnimationFrame(activeAnimationFrameId);
-    alert("ちっちゃくする処理の途中でエラーが発生しました。");
+    alert("ちっちゃくする処理でエラーが発生しました。");
     switchStep(stepProgress, stepConfigure);
   }
 }
@@ -362,32 +315,8 @@ async function compressVideo() {
 startCompressBtn.addEventListener('click', compressVideo);
 
 // ----------------------------------------------------
-// 6. Sharing & Downloading Logic (LINEへ送る)
+// 7. Downloading Logic
 // ----------------------------------------------------
-async function shareVideo() {
-  if (!compressedBlob) return;
-
-  const shareFile = new File([compressedBlob], compressedFileName, { type: compressedBlob.type });
-
-  try {
-    if (navigator.share) {
-      await navigator.share({
-        files: [shareFile],
-        title: 'ちっちゃ君動画',
-        text: 'ライン動画ちっちゃ君でちっちゃくした動画だよ！LINEで送ってね。'
-      });
-      showToast("共有メニューを開きました");
-    } else {
-      alert("この端末は直接共有に対応していません。「端末に保存する」ボタンで保存してからLINEで送ってね！");
-    }
-  } catch (error) {
-    if (error.name !== 'AbortError') {
-      console.error("Sharing failed:", error);
-      showToast("共有に失敗しました。ダウンロードをお試しください。");
-    }
-  }
-}
-
 function downloadVideo() {
   if (!compressedBlob) return;
 
@@ -399,14 +328,13 @@ function downloadVideo() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast("端末への保存を開始しました");
+  showToast("動画の保存を開始しました");
 }
 
-shareVideoBtn.addEventListener('click', shareVideo);
 downloadVideoBtn.addEventListener('click', downloadVideo);
 
 // ----------------------------------------------------
-// 7. Navigation & Reset Logic
+// 8. Navigation & Reset Logic
 // ----------------------------------------------------
 function switchStep(fromStep, toStep) {
   fromStep.classList.add('hidden');
@@ -428,20 +356,7 @@ function resetState() {
   originalDuration = 0;
   calculatedBitrate = 0;
   
-  if (activeAnimationFrameId) cancelAnimationFrame(activeAnimationFrameId);
   if (progressTimer) clearInterval(progressTimer);
-  
-  if (activeRecorderVideo) {
-    activeRecorderVideo.pause();
-    activeRecorderVideo.src = "";
-    activeRecorderVideo.load();
-    activeRecorderVideo = null;
-  }
-  
-  if (activeAudioCtx && activeAudioCtx.state !== 'closed') {
-    activeAudioCtx.close();
-    activeAudioCtx = null;
-  }
   
   compressedBlob = null;
   
@@ -457,7 +372,7 @@ function resetState() {
 }
 
 // ----------------------------------------------------
-// 8. Toast Notification Helper
+// 9. Toast Notification Helper
 // ----------------------------------------------------
 function showToast(message) {
   toastMessage.textContent = message;
