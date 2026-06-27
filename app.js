@@ -6,6 +6,7 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js')
       .then(reg => {
         console.log('Service Worker registered successfully:', reg.scope);
+        // 新しいサービスワーカーの有無を確認して更新を促す
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
           newWorker.addEventListener('statechange', () => {
@@ -26,13 +27,18 @@ if ('serviceWorker' in navigator) {
 let originalFile = null;
 let originalDuration = 0; // 秒
 let calculatedBitrate = 0; // kbps
-let targetSize = 30; // デフォルト 30MB (高画質)
+let targetSize = 30; // デフォルト 30MB
 let progressTimer = null;
 let startTime = 0;
-let wakeLock = null; // Wake Lock API参照用
+let wakeLock = null; // Wake Lock API用
 
-// Cloudflare WorkersのAPIエンドポイントURL (ご自身のWorkersのアドレスに変更してください)
-const CLOUDFLARE_WORKER_URL = 'https://line-video-chiccha-kun.nakayouspiel.workers.dev/';
+// ffmpeg.wasm v0.11.6 の初期設定 (グローバル変数 FFmpeg より取得)
+const { createFFmpeg, fetchFile } = FFmpeg;
+const ffmpeg = createFFmpeg({
+  log: true,
+  // シングルスレッド対応コアを明示指定 (これでSharedArrayBufferおよびCOOP/COEP制限を完全回避)
+  corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js'
+});
 
 // DOM Elements
 const stepUpload = document.getElementById('stepUpload');
@@ -76,28 +82,31 @@ let compressedBlob = null;
 let compressedFileName = "compressed_line.mp4";
 
 // ----------------------------------------------------
-// 3. Wake Lock API (スリープ防止処理)
+// 3. Initialize FFmpeg.wasm (Single Thread)
 // ----------------------------------------------------
-async function requestWakeLock() {
-  if ('wakeLock' in navigator) {
-    try {
-      wakeLock = await navigator.wakeLock.request('screen');
-      console.log('Screen Wake Lock active.');
-    } catch (err) {
-      console.warn(`Wake Lock request failed: ${err.name}, ${err.message}`);
-    }
+async function initFFmpeg() {
+  try {
+    // 進行状況の監視を設定
+    ffmpeg.setProgress(({ ratio }) => {
+      const percentage = Math.round(ratio * 100);
+      progressBar.style.width = `${percentage}%`;
+      progressPercent.textContent = `${percentage}%`;
+    });
+
+    // WASMモジュールのロード
+    await ffmpeg.load();
+
+    document.getElementById('loaderOverlay').classList.add('hidden');
+    showToast("準備が完了しました！");
+  } catch (error) {
+    console.error("FFmpeg initialization failed:", error);
+    document.getElementById('loaderTitle').textContent = "準備に失敗しました";
+    document.getElementById('loaderDesc').innerHTML = `<span style="color: var(--error-color)">エラー: ちっちゃくするプログラムのロード中に問題が発生しました。もう一度再読み込みをお試しください。</span>`;
   }
 }
 
-function releaseWakeLock() {
-  if (wakeLock !== null) {
-    wakeLock.release()
-      .then(() => {
-        wakeLock = null;
-        console.log('Screen Wake Lock released.');
-      });
-  }
-}
+// アプリ起動時にFFmpegを初期化
+window.addEventListener('DOMContentLoaded', initFFmpeg);
 
 // ----------------------------------------------------
 // 4. File Handling & Error Checks
@@ -155,6 +164,7 @@ function handleVideoSelect(file) {
     
     inputVideoPreview.src = URL.createObjectURL(file);
     
+    // スライダー廃止に伴い、選択されたモードのビットレート計算を初期実行
     calculateOptimalBitrate();
     switchStep(stepUpload, stepConfigure);
   };
@@ -210,19 +220,22 @@ function calculateOptimalBitrate() {
 }
 
 // ----------------------------------------------------
-// 6. Cloudflare Workers API Request (Video Offloading)
+// 6. Video Encoding via FFmpeg (Single Thread Mode)
 // ----------------------------------------------------
 async function compressVideo() {
-  if (!originalFile) {
-    showToast("ファイルが選択されていません");
+  if (!ffmpeg || !originalFile) {
+    showToast("プログラムが準備できていません");
     return;
   }
 
   // 画面遷移
   switchStep(stepConfigure, stepProgress);
-  progressStatus.textContent = '動画データを送信中...';
-  progressPercent.textContent = '送信中';
-  progressBar.style.width = '100%';
+  progressStatus.textContent = '動画ファイルを準備中...';
+  progressBar.style.width = '0%';
+  progressPercent.textContent = '0%';
+  
+  // スリープ防止 (Wake Lock) を有効化
+  await requestWakeLock();
   
   let elapsedSeconds = 0;
   timeElapsed.textContent = `経過時間: 0秒`;
@@ -231,37 +244,51 @@ async function compressVideo() {
   progressTimer = setInterval(() => {
     elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
     timeElapsed.textContent = `経過時間: ${elapsedSeconds}秒`;
-    if (elapsedSeconds > 10) {
-      progressStatus.textContent = 'クラウドでちっちゃくエンコード中...';
-      progressPercent.textContent = '処理中';
-    }
   }, 1000);
 
   try {
-    // スリープ防止 (Wake Lock) を有効化
-    await requestWakeLock();
-
-    // FormData の構築
-    const formData = new FormData();
-    formData.append('video', originalFile);
-    formData.append('targetSize', targetSize);
-    formData.append('bitrate', calculatedBitrate);
-
+    const inputFileName = 'input.mp4';
+    const outputFileName = 'output.mp4';
     compressedFileName = `chiccha_${Date.now()}.mp4`;
 
-    // Cloudflare Workers の API に POST リクエストを送信
-    const response = await fetch(CLOUDFLARE_WORKER_URL, {
-      method: 'POST',
-      body: formData
-    });
+    // 1. ファイルをWASM仮想メモリへ書き込み
+    ffmpeg.FS('writeFile', inputFileName, await fetchFile(originalFile));
+    progressStatus.textContent = '動画をちっちゃく加工中...';
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || 'サーバー処理エラー');
+    // 2. FFmpegを実行（等倍速・音声ありの正しい圧縮）
+    // 2. FFmpegを実行（等倍速・音声ありの正しい圧縮）
+    const args = [
+      '-i', inputFileName,
+      '-vcodec', 'libx264',
+      '-acodec', 'aac',
+      '-b:v', `${calculatedBitrate}k`,
+      '-b:a', '128k',
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'fast',
+      '-movflags', '+faststart'
+    ];
+
+    if (targetSize === 5) {
+      args.push('-vf', 'scale=640:-2');
     }
 
-    // レスポンスから生の動画Blobを取得
-    compressedBlob = await response.blob();
+    args.push(outputFileName);
+
+    await ffmpeg.run(...args);
+
+    progressStatus.textContent = '処理を完了しています...';
+
+    // 3. 圧縮後のファイルを仮想メモリから読み込み
+    const data = ffmpeg.FS('readFile', outputFileName);
+    compressedBlob = new Blob([data.buffer], { type: 'video/mp4' });
+
+    // 4. メモリ解放
+    try {
+      ffmpeg.FS('unlink', inputFileName);
+      ffmpeg.FS('unlink', outputFileName);
+    } catch (e) {
+      console.warn("Clean up failed:", e);
+    }
 
     clearInterval(progressTimer);
     releaseWakeLock(); // スリープ制限を解除
@@ -274,7 +301,7 @@ async function compressVideo() {
     beforeSizeVal.textContent = `${originalSizeMB.toFixed(1)} MB`;
     afterSizeVal.textContent = `${compressedSizeMB.toFixed(1)} MB`;
     reductionRatioVal.textContent = `${reductionRatio}%`;
-
+    
     if (reductionRatio > 0) {
       reductionBadge.textContent = 'SAVE';
       reductionBadge.style.background = 'rgba(16, 185, 129, 0.15)';
@@ -291,11 +318,10 @@ async function compressVideo() {
     showToast("ちっちゃくなりました！");
 
   } catch (error) {
-    console.error("Compression offloading failed:", error);
+    console.error("Compression process failed:", error);
     clearInterval(progressTimer);
     releaseWakeLock(); // スリープ制限を解除
-    
-    alert(`ちっちゃくする処理でエラーが発生しました。\n詳細: ${error.message}`);
+    alert("ちっちゃくする処理でエラーが発生しました。");
     switchStep(stepProgress, stepConfigure);
   }
 }
@@ -370,4 +396,28 @@ function showToast(message) {
   setTimeout(() => {
     toast.classList.remove('show');
   }, 3000);
+}
+
+// ----------------------------------------------------
+// 10. Wake Lock API (スリープ防止処理)
+// ----------------------------------------------------
+async function requestWakeLock() {
+  if ('wakeLock' in navigator) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      console.log('Screen Wake Lock active.');
+    } catch (err) {
+      console.warn(`Wake Lock request failed: ${err.name}, ${err.message}`);
+    }
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock !== null) {
+    wakeLock.release()
+      .then(() => {
+        wakeLock = null;
+        console.log('Screen Wake Lock released.');
+      });
+  }
 }

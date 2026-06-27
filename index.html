@@ -19,7 +19,14 @@
 </head>
 <body>
 
-  <!-- No more heavy WASM load overlay needed. App starts instantly! -->
+  <!-- FFmpeg.wasm Loading Overlay -->
+  <div id="loaderOverlay" class="loader-overlay">
+    <div class="spinner"></div>
+    <div class="loader-title" id="loaderTitle">ちっちゃ君の準備中...</div>
+    <div class="loader-desc" id="loaderDesc">
+      動画をちっちゃくするプログラムを読み込んでいます。初回のみ十数秒かかる場合があります。（SharedArrayBuffer不要の安全モードで動作しています）
+    </div>
+  </div>
 
   <div class="app-container">
     <!-- Header -->
@@ -105,21 +112,20 @@
     <section id="stepProgress" class="card fade-in hidden">
       <div style="text-align: center; margin-bottom: 20px;">
         <div class="spinner" style="margin: 0 auto 16px;"></div>
-        <h3 style="font-size: 1.15rem; font-weight: 600;">クラウドでちっちゃくしています...</h3>
+        <h3 style="font-size: 1.15rem; font-weight: 600;">ちっちゃくしています...</h3>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 6px; line-height: 1.4;">
           ブラウザを閉じたり、別のタブに移動したりしないでください。<br>
-          (スリープ防止機能が作動しています。安全のためにこの画面のままお待ちください)
+          (シングルスレッド動作のため少し時間がかかる場合があります)
         </p>
       </div>
 
       <div class="progress-container">
         <div class="progress-header">
-          <span class="progress-status" id="progressStatus">アップロード・処理中...</span>
-          <span class="progress-percentage" id="progressPercent">処理中</span>
+          <span class="progress-status" id="progressStatus">エンコード処理中</span>
+          <span class="progress-percentage" id="progressPercent">0%</span>
         </div>
         <div class="progress-track">
-          <!-- Indeterminate progress bar using css animation -->
-          <div class="progress-bar" id="progressBar" style="width: 100%;"></div>
+          <div class="progress-bar" id="progressBar"></div>
         </div>
         <div class="time-elapsed" id="timeElapsed">経過時間: 0秒</div>
       </div>
@@ -154,6 +160,8 @@
         </div>
       </div>
 
+      <!-- No more share button as requested -->
+
       <button id="downloadVideoBtn" class="btn btn-primary" style="background: var(--primary-gradient); box-shadow: 0 4px 15px var(--primary-glow); margin-bottom: 12px; padding: 20px; font-size: 1.15rem; border-radius: 20px;">
         <svg style="width: 24px; height: 24px; fill: white;" viewBox="0 0 24 24">
           <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
@@ -170,7 +178,10 @@
     <span id="toastMessage">メッセージ</span>
   </div>
   
-  <!-- Main Logic (Pure Web Client - No direct Wasm dependency in page) -->
+  <!-- FFmpeg.wasm v0.11.6 (SharedArrayBuffer不要のシングルスレッド対応コア用) -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+
+  <!-- Main Logic -->
   <script src="app.js"></script>
 </body>
 </html>
