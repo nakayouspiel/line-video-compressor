@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme. -->
+    <style name="Theme.LineVideoCompressor" parent="android:Theme.Material.NoActionBar">
+        <!-- Customize your theme here. -->
+        <item name="android:statusBarColor">#0f172a</item>
+        <item name="android:navigationBarColor">#0f172a</item>
+    </style>
+</resources>
