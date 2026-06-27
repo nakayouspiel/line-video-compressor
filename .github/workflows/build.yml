@@ -40,7 +40,7 @@ jobs:
 
     # 6. APKのビルド実行 (assembleDebug)
     - name: Build debug APK
-      run: ./gradlew assembleDebug
+      run: ./gradlew assembleDebug --stacktrace
 
     # 7. 生成された APK ファイルを GitHub の Artifacts へアップロード
     - name: Upload APK Artifact

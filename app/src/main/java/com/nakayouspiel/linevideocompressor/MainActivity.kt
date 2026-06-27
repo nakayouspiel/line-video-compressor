@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import com.antonkarpenko.ffmpegkit.FFmpegKit
 import com.antonkarpenko.ffmpegkit.FFmpegKitConfig
 import com.antonkarpenko.ffmpegkit.ReturnCode
+import com.antonkarpenko.ffmpegkit.Statistics
 import com.antonkarpenko.ffmpegkit.StatisticsCallback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -477,7 +478,7 @@ private suspend fun performCompression(
         }
 
         // Configure progress stats callback
-        FFmpegKitConfig.enableStatisticsCallback(StatisticsCallback { stats ->
+        FFmpegKitConfig.enableStatisticsCallback { stats: Statistics ->
             if (totalDuration > 0) {
                 val timeInMilliseconds = stats.time.toDouble()
                 val totalTimeInMilliseconds = totalDuration * 1000.0
@@ -487,7 +488,7 @@ private suspend fun performCompression(
                 // Post progress back to UI main thread
                 onProgressUpdate(clampedProgress)
             }
-        })
+        }
 
         // Construct ffmpeg execution command args
         val cmd = mutableListOf(
