@@ -155,7 +155,48 @@ fileInput.addEventListener('change', (e) => {
   }
 });
 
-function handleFileSelection(file: File) {
+// 動画の再生時間を安全に取得するフェイルセーフ対応の非同期関数 (2秒タイムアウト)
+function getVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    const videoUrl = URL.createObjectURL(file);
+    video.src = videoUrl;
+
+    let hasResolved = false;
+
+    // 2秒のタイムアウトを設定 (デッドロック回避)
+    const timeoutId = setTimeout(() => {
+      if (!hasResolved) {
+        hasResolved = true;
+        URL.revokeObjectURL(videoUrl);
+        console.warn('Metadata loading timed out. Defaulting duration to 60s.');
+        resolve(60); // タイムアウト時はデフォルトで60秒を返す
+      }
+    }, 2000);
+
+    video.onloadedmetadata = () => {
+      if (!hasResolved) {
+        hasResolved = true;
+        clearTimeout(timeoutId);
+        URL.revokeObjectURL(videoUrl);
+        resolve(video.duration);
+      }
+    };
+
+    video.onerror = () => {
+      if (!hasResolved) {
+        hasResolved = true;
+        clearTimeout(timeoutId);
+        URL.revokeObjectURL(videoUrl);
+        console.warn('Metadata loading failed. Defaulting duration to 60s.');
+        resolve(60); // エラー時もデフォルトで60秒を返す
+      }
+    };
+  });
+}
+
+async function handleFileSelection(file: File) {
   if (!file.type.startsWith('video/')) {
     alert('動画ファイルを選んでね！');
     fileInput.value = '';
@@ -169,14 +210,9 @@ function handleFileSelection(file: File) {
 
   const sizeMB = file.size / (1024 * 1024);
   
-  // ダミーvideoで再生時間を正確に取得
-  const video = document.createElement('video');
-  video.preload = 'metadata';
-  video.src = URL.createObjectURL(file);
-  
-  video.onloadedmetadata = () => {
-    videoDuration = video.duration;
-    URL.revokeObjectURL(video.src);
+  try {
+    progressStatus.style.color = 'var(--text-main)'; // エラー色リセット
+    videoDuration = await getVideoDuration(file);
 
     const min = Math.floor(videoDuration / 60);
     const sec = Math.floor(videoDuration % 60);
@@ -186,26 +222,26 @@ function handleFileSelection(file: File) {
     uploadSubtext.textContent = 'タップすると別の動画を選び直せます';
     fileInfo.classList.remove('hidden');
     
-    // 英数字のファイル名はフールプルーフのために一切見せず、容量と長さだけを表示する
+    // 英数字のファイル名は一切見せず、容量と長さだけを表示
     fileInfo.textContent = `元の動画: ${sizeMB.toFixed(1)}MB / ${durationText}`;
     dropzone.classList.add('has-file');
     
-    // 読み込みがすべて正常終了したので、圧縮ボタンを有効にする
+    // 読み込みが正常終了したので、圧縮ボタンを有効にする
     startCompressBtn.removeAttribute('disabled');
-  };
-
-  video.onerror = () => {
-    alert('動画メタデータの読み込みに失敗しました。別の動画ファイルを試してください。');
+  } catch (err: any) {
+    console.error('File selection metadata check failed:', err);
+    fileInfo.classList.remove('hidden');
+    fileInfo.textContent = `ファイル読み込みに失敗しました。: ${err.message || err}`;
     startCompressBtn.setAttribute('disabled', 'true');
-  };
+  }
 }
 
-// 6. ffmpeg.wasm 初期化 & 読み込み
+// 6. ffmpeg.wasm 初期化 & 読み込み (確実な待機)
 async function initFFmpeg() {
   if (ffmpeg) return ffmpeg;
   
   ffmpeg = new FFmpeg();
-  progressStatus.textContent = '圧縮エンジンの読み込み中...';
+  progressStatus.textContent = '圧縮エンジン(Wasm)の読み込み中...';
   
   // 同一ドメインからWasmをロードすることでCORSエラーを完全に回避
   const baseURL = window.location.origin + '/ffmpeg';
@@ -236,6 +272,7 @@ async function startCompression() {
 
   progressPercent.textContent = '0%';
   progressBar.style.width = '0%';
+  progressStatus.style.color = 'var(--text-main)'; // 文字色リセット
   progressStatus.textContent = 'ちっちゃくしています... 0%';
 
   // 経過時間カウントの開始
@@ -250,10 +287,11 @@ async function startCompression() {
     // 画面消灯をブロック
     await requestWakeLock();
 
-    // FFmpegエンジンのロード
+    // ① FFmpegエンジンのロードが完全に完了するまで確実に待機する
+    progressStatus.textContent = '圧縮エンジンを準備中...';
     const instance = await initFFmpeg();
 
-    // 進行状況のイベント監視 (フリーズ回避のため、シンプルにテキストとインジケータのみ更新)
+    // ② 進行状況のイベント監視登録
     instance.on('progress', ({ progress }) => {
       const percentage = Math.min(99, Math.round(progress * 100));
       progressPercent.textContent = `${percentage}%`;
@@ -261,7 +299,8 @@ async function startCompression() {
       progressStatus.textContent = `ちっちゃくしています... ${percentage}%`;
     });
 
-    // 仮想FSに入力動画ファイルを書き込み
+    // ③ 仮想FSに入力動画ファイルを書き込み
+    progressStatus.textContent = '動画データを読み込み中...';
     await instance.writeFile('input.mp4', await fetchFile(selectedFile));
 
     // FFmpeg引数 (等倍速、音声保持)
@@ -286,10 +325,12 @@ async function startCompression() {
 
     args.push('output.mp4');
 
-    // エンコードの開始
+    // ④ エンコードの開始
+    progressStatus.textContent = '動画を圧縮中...';
     await instance.exec(args);
 
-    // 圧縮後のバイナリを仮想FSから読み出し
+    // ⑤ 圧縮後のバイナリを仮想FSから読み出し
+    progressStatus.textContent = 'ファイルを出力中...';
     const outputData = await instance.readFile('output.mp4');
     
     // SharedArrayBufferの型エラーを防ぎつつBlobへ変換
@@ -299,7 +340,7 @@ async function startCompression() {
       throw new Error('期待されたバイナリデータが取得できませんでした');
     }
 
-    // 仮想FSのメモリ解放
+    // ⑥ 仮想FSのメモリ解放
     await instance.deleteFile('input.mp4');
     await instance.deleteFile('output.mp4');
 
@@ -320,12 +361,23 @@ async function startCompression() {
 
   } catch (error: any) {
     console.error('Encoding process failure:', error);
-    alert('圧縮処理中にエラーが発生しました。別の動画を試すか、再度やり直してください。');
+    
+    // 進捗テキストエリアへ直接エラー詳細を出力して表示する (画面出力)
+    progressStatus.style.color = '#ef4444'; // エラー用赤文字
+    progressStatus.textContent = `❌ エラー: ${error.message || error}`;
+    
+    alert(`エラーが発生しました。理由:\n${error.message || error}`);
     
     if (progressTimer) clearInterval(progressTimer);
     window.removeEventListener('beforeunload', preventUnload);
     releaseWakeLock();
-    resetUI();
+    
+    // リセットボタンを有効にして再試行できるようにする
+    modeNormal.removeAttribute('disabled');
+    modeTwitter.removeAttribute('disabled');
+    modeLong.removeAttribute('disabled');
+    dropzone.style.pointerEvents = 'auto';
+    startCompressBtn.removeAttribute('disabled');
   }
 }
 
@@ -366,6 +418,7 @@ function resetUI() {
   fileInput.value = '';
   
   selectPreset('normal');
+  progressStatus.style.color = 'var(--text-main)'; // エラー色リセット
   
   uploadText.textContent = '① 動画を選ぶ';
   uploadSubtext.textContent = 'タップして動画ファイルを選択してください';
