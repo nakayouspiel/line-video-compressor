@@ -19,7 +19,14 @@
 </head>
 <body>
 
-  <!-- No more WASM loader overlay. App starts instantly! -->
+  <!-- FFmpeg.wasm Loading Overlay (Worker Init Stage) -->
+  <div id="loaderOverlay" class="loader-overlay">
+    <div class="spinner"></div>
+    <div class="loader-title" id="loaderTitle">ちっちゃ君の準備中...</div>
+    <div class="loader-desc" id="loaderDesc">
+      動画をちっちゃくするプログラムを読み込んでいます。初回のみ十数秒かかる場合があります。（SharedArrayBuffer不要の安全モードで動作しています）
+    </div>
+  </div>
 
   <div class="app-container">
     <!-- Header -->
@@ -70,9 +77,9 @@
         <div class="setting-row">
           <span class="setting-label" style="margin-bottom: 8px; display: inline-block;">ちっちゃさ（目標サイズ）</span>
           <div class="mode-select-grid">
-            <button type="button" id="modeHigh" class="mode-btn active" data-size="15">
+            <button type="button" id="modeHigh" class="mode-btn active" data-size="30">
               <span class="mode-title">高画質</span>
-              <span class="mode-desc">15MB以内 (おすすめ)</span>
+              <span class="mode-desc">30MB以内 (おすすめ)</span>
             </button>
             <button type="button" id="modeFast" class="mode-btn" data-size="5">
               <span class="mode-title">爆速・軽量</span>
@@ -83,7 +90,7 @@
 
         <div class="setting-row">
           <div class="setting-label-row">
-            <span class="setting-label">目標の総ビットレート</span>
+            <span class="setting-label">計算された映像ビットレート</span>
             <span class="setting-value-badge" id="calculatedBitrateLabel">自動計算中...</span>
           </div>
           <p class="settings-info" id="bitrateExplanation">
@@ -108,7 +115,7 @@
         <h3 style="font-size: 1.15rem; font-weight: 600;">ちっちゃくしています...</h3>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 6px; line-height: 1.4;">
           ブラウザを閉じたり、別のタブに移動したりしないでください。<br>
-          (等倍速・高音質なエンコード処理を実行しています)
+          (スリープ防止機能が作動しています。安全のためにこの画面のままお待ちください)
         </p>
       </div>
 
@@ -153,8 +160,6 @@
         </div>
       </div>
 
-      <!-- No sharing buttons are loaded here -->
-
       <button id="downloadVideoBtn" class="btn btn-primary" style="background: var(--primary-gradient); box-shadow: 0 4px 15px var(--primary-glow); margin-bottom: 12px; padding: 20px; font-size: 1.15rem; border-radius: 20px;">
         <svg style="width: 24px; height: 24px; fill: white;" viewBox="0 0 24 24">
           <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
@@ -170,8 +175,8 @@
   <div id="toast" class="toast">
     <span id="toastMessage">メッセージ</span>
   </div>
-
-  <!-- Main Logic -->
+  
+  <!-- Main Logic (No more direct FFmpeg CDN loading in main thread) -->
   <script src="app.js"></script>
 </body>
 </html>
