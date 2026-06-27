@@ -7,7 +7,6 @@ let selectedFile: File | null = null;
 let activePreset: 'normal' | 'twitter' | 'long' = 'normal';
 let videoDuration: number = 0;
 let progressTimer: number | null = null;
-let messageTimer: number | null = null;
 let startTime: number = 0;
 let wakeLock: WakeLockSentinel | null = null;
 let compressedBlob: Blob | null = null;
@@ -41,15 +40,6 @@ const resetBtn = document.getElementById('resetBtn') as HTMLButtonElement;
 const installArea = document.getElementById('installArea') as HTMLDivElement;
 const installBtn = document.getElementById('installBtn') as HTMLButtonElement;
 const iosInstallGuide = document.getElementById('iosInstallGuide') as HTMLParagraphElement;
-
-// 安心メッセージのリスト
-const comfortMessages = [
-  "動画を丁寧にちっちゃくしています...",
-  "スマホの性能を使って頑張っています。画面を閉じずにお待ちください...",
-  "音ズレを防ぎながら、等倍でしっかりエンコードを行っています...",
-  "もう少しで終わります、そのままお待ちください...",
-  "ちっちゃくなったら、自動で保存ボタンが出現します..."
-];
 
 // 1. PWA インストール導線の制御 (iOS配慮含む)
 const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
@@ -246,14 +236,7 @@ async function startCompression() {
 
   progressPercent.textContent = '0%';
   progressBar.style.width = '0%';
-  progressStatus.textContent = comfortMessages[0];
-
-  // 安心メッセージのローテーションタイマー開始
-  let msgIdx = 0;
-  messageTimer = window.setInterval(() => {
-    msgIdx = (msgIdx + 1) % comfortMessages.length;
-    progressStatus.textContent = comfortMessages[msgIdx];
-  }, 4000);
+  progressStatus.textContent = 'ちっちゃくしています... 0%';
 
   // 経過時間カウントの開始
   startTime = Date.now();
@@ -270,11 +253,12 @@ async function startCompression() {
     // FFmpegエンジンのロード
     const instance = await initFFmpeg();
 
-    // 進行状況のイベント監視
+    // 進行状況のイベント監視 (フリーズ回避のため、シンプルにテキストとインジケータのみ更新)
     instance.on('progress', ({ progress }) => {
       const percentage = Math.min(99, Math.round(progress * 100));
       progressPercent.textContent = `${percentage}%`;
       progressBar.style.width = `${percentage}%`;
+      progressStatus.textContent = `ちっちゃくしています... ${percentage}%`;
     });
 
     // 仮想FSに入力動画ファイルを書き込み
@@ -321,7 +305,6 @@ async function startCompression() {
 
     // リフレッシュ・後処理
     if (progressTimer) clearInterval(progressTimer);
-    if (messageTimer) clearInterval(messageTimer);
     window.removeEventListener('beforeunload', preventUnload);
     releaseWakeLock();
 
@@ -340,7 +323,6 @@ async function startCompression() {
     alert('圧縮処理中にエラーが発生しました。別の動画を試すか、再度やり直してください。');
     
     if (progressTimer) clearInterval(progressTimer);
-    if (messageTimer) clearInterval(messageTimer);
     window.removeEventListener('beforeunload', preventUnload);
     releaseWakeLock();
     resetUI();
