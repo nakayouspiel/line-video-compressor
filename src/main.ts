@@ -1,17 +1,18 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
-// Global variables
+// グローバルステート
 let ffmpeg: FFmpeg | null = null;
 let selectedFile: File | null = null;
-let targetSizeMB: number = 30; // Default 30MB (High quality)
+let targetSizeMB: number = 30; // デフォルト 30MB
 let videoDuration: number = 0;
 let progressTimer: number | null = null;
 let startTime: number = 0;
 let wakeLock: WakeLockSentinel | null = null;
 let compressedBlob: Blob | null = null;
+let deferredPrompt: any = null;
 
-// DOM Elements
+// DOM要素の参照
 const modeHigh = document.getElementById('modeHigh') as HTMLButtonElement;
 const modeFast = document.getElementById('modeFast') as HTMLButtonElement;
 const dropzone = document.getElementById('dropzone') as HTMLDivElement;
@@ -33,7 +34,44 @@ const afterSizeVal = document.getElementById('afterSizeVal') as HTMLSpanElement;
 const downloadBtn = document.getElementById('downloadBtn') as HTMLButtonElement;
 const resetBtn = document.getElementById('resetBtn') as HTMLButtonElement;
 
-// 1. Wake Lock API (画面スリープ防止)
+const installArea = document.getElementById('installArea') as HTMLDivElement;
+const installBtn = document.getElementById('installBtn') as HTMLButtonElement;
+const iosInstallGuide = document.getElementById('iosInstallGuide') as HTMLParagraphElement;
+
+// 1. PWA インストール導線の制御 (iOS配慮含む)
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
+
+if (!isStandalone) {
+  // iOS判定
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+  if (isIOS) {
+    installArea.classList.remove('hidden');
+    iosInstallGuide.classList.remove('hidden');
+    installBtn.classList.add('hidden');
+  }
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Android等でホーム画面追加プロンプトが実行可能な場合
+  e.preventDefault();
+  deferredPrompt = e;
+  if (!isStandalone) {
+    installArea.classList.remove('hidden');
+    installBtn.classList.remove('hidden');
+    iosInstallGuide.classList.add('hidden');
+  }
+});
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  console.log(`User response to install prompt: ${outcome}`);
+  deferredPrompt = null;
+  installArea.classList.add('hidden');
+});
+
+// 2. Screen Wake Lock API (画面スリープ防止)
 async function requestWakeLock() {
   if ('wakeLock' in navigator) {
     try {
@@ -58,7 +96,14 @@ function releaseWakeLock() {
   }
 }
 
-// 2. Mode Selection Toggle
+// 3. 誤操作防止のブラウザアンロード警告
+function preventUnload(e: BeforeUnloadEvent) {
+  e.preventDefault();
+  e.returnValue = '動画をちっちゃくしている最中です。途中で閉じるとやり直しになりますが、本当に閉じますか？';
+  return e.returnValue;
+}
+
+// 4. 2択トグルのクリック制御
 modeHigh.addEventListener('click', () => {
   targetSizeMB = 30;
   modeHigh.classList.add('active');
@@ -71,7 +116,7 @@ modeFast.addEventListener('click', () => {
   modeHigh.classList.remove('active');
 });
 
-// 3. File Picker & Dropzone Events
+// 5. 動画選択・ドロップエリアの制御
 dropzone.addEventListener('click', () => fileInput.click());
 
 dropzone.addEventListener('dragover', (e) => {
@@ -108,11 +153,12 @@ function handleFileSelection(file: File) {
 
   selectedFile = file;
   compressedBlob = null;
+  // メタデータ読み込みが終わるまで実行ボタンを完全にdisabledにする
+  startCompressBtn.setAttribute('disabled', 'true');
 
-  // Show selected video details
   const sizeMB = file.size / (1024 * 1024);
   
-  // Extract video duration using dummy video element
+  // ダミーvideoで再生時間を正確に取得
   const video = document.createElement('video');
   video.preload = 'metadata';
   video.src = URL.createObjectURL(file);
@@ -123,30 +169,38 @@ function handleFileSelection(file: File) {
 
     const min = Math.floor(videoDuration / 60);
     const sec = Math.floor(videoDuration % 60);
-    const durationText = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    
+    let durationText = '';
+    if (min > 0) {
+      durationText = `${min}分${sec}秒`;
+    } else {
+      durationText = `${sec}秒`;
+    }
 
     uploadText.textContent = '動画変更';
     uploadSubtext.textContent = 'タップすると別の動画を選び直せます';
     fileInfo.classList.remove('hidden');
-    fileInfo.textContent = `${file.name} (${sizeMB.toFixed(1)} MB | ${durationText})`;
+    // 英数字のファイル名はフールプルーフのために一切見せず、容量と長さだけを表示する
+    fileInfo.textContent = `元の動画: ${sizeMB.toFixed(1)}MB / ${durationText}`;
     dropzone.classList.add('has-file');
+    // 読み込みがすべて正常終了したので、圧縮ボタンを有効にする
     startCompressBtn.removeAttribute('disabled');
   };
 
   video.onerror = () => {
     alert('動画メタデータの読み込みに失敗しました。別の動画ファイルを試してください。');
+    startCompressBtn.setAttribute('disabled', 'true');
   };
 }
 
-// 4. FFmpeg Loading & Processing
+// 6. ffmpeg.wasm 初期化 & 読み込み
 async function initFFmpeg() {
   if (ffmpeg) return ffmpeg;
   
   ffmpeg = new FFmpeg();
-  
   progressStatus.textContent = '圧縮エンジンの読み込み中...';
   
-  // Load using local wasm files from public/ffmpeg/ to avoid CORS block
+  // 同一ドメインからWasmをロードすることでCORSエラーを完全に回避
   const baseURL = window.location.origin + '/ffmpeg';
   await ffmpeg.load({
     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
@@ -157,10 +211,14 @@ async function initFFmpeg() {
   return ffmpeg;
 }
 
+// 7. 圧縮のメイン実行処理
 async function startCompression() {
   if (!selectedFile || videoDuration <= 0) return;
 
-  // UI Setup for execution status
+  // 誤操作による画面離脱やリロードを防ぐイベントを追加
+  window.addEventListener('beforeunload', preventUnload);
+
+  // UIを処理中モードへロック
   modeHigh.setAttribute('disabled', 'true');
   modeFast.setAttribute('disabled', 'true');
   dropzone.style.pointerEvents = 'none';
@@ -172,7 +230,7 @@ async function startCompression() {
   progressBar.style.width = '0%';
   progressStatus.textContent = '準備中...';
 
-  // Timer run
+  // 経過時間カウントの開始
   startTime = Date.now();
   elapsedTimeLabel.textContent = '経過時間: 0秒';
   progressTimer = window.setInterval(() => {
@@ -181,13 +239,13 @@ async function startCompression() {
   }, 1000);
 
   try {
-    // Acquire wake lock to block sleep on mobile
+    // 画面消灯をブロック
     await requestWakeLock();
 
-    // Initialize/Load ffmpeg
+    // FFmpegエンジンのロード
     const instance = await initFFmpeg();
 
-    // Setup real-time progress callback
+    // 進行状況のイベント監視
     instance.on('progress', ({ progress }) => {
       const percentage = Math.min(99, Math.round(progress * 100));
       progressPercent.textContent = `${percentage}%`;
@@ -195,14 +253,14 @@ async function startCompression() {
       progressStatus.textContent = 'ちっちゃく加工中...';
     });
 
-    // Write file to internal Wasm virtual filesystem
+    // 仮想FSに入力動画ファイルを書き込み
     await instance.writeFile('input.mp4', await fetchFile(selectedFile));
 
-    // Optimal video bitrate calculations (total target size minus audio 128k, clamped to safe ranges)
+    // 目標サイズに合わせたビデオビットレートの最適化計算 (音声128kを除外)
     const totalBitrateKbps = (targetSizeMB * 8 * 1024) / videoDuration;
     const calculatedVideoBitrate = Math.round(totalBitrateKbps - 128).coerceIn(150, 4000);
 
-    // Build FFmpeg CLI arguments
+    // FFmpeg引数 (等倍速、音声保持)
     const args = [
       '-i', 'input.mp4',
       '-vcodec', 'libx264',
@@ -214,34 +272,38 @@ async function startCompression() {
       '-movflags', '+faststart'
     ];
 
-    // Scale down width to 640px preserving aspect ratio for 5MB constraint mode
+    // 5MB軽量モード選択時は解像度リサイズを挿入
     if (targetSizeMB === 5) {
       args.push('-vf', 'scale=640:-2');
     }
 
     args.push('output.mp4');
 
-    // Run compile task
-    progressStatus.textContent = 'エンコードを開始します...';
+    // エンコードの開始
+    progressStatus.textContent = 'エンコードを実行中...';
     await instance.exec(args);
 
-    // Read result binary buffer from Wasm FS
-    progressStatus.textContent = '最終処理中...';
+    // 圧縮後のバイナリを仮想FSから読み出し
+    progressStatus.textContent = '最終出力ファイルを作成中...';
     const outputData = await instance.readFile('output.mp4');
+    
+    // SharedArrayBufferの型エラーを防ぎつつBlobへ変換
     if (outputData instanceof Uint8Array) {
       compressedBlob = new Blob([outputData.buffer as ArrayBuffer], { type: 'video/mp4' });
     } else {
       throw new Error('期待されたバイナリデータが取得できませんでした');
     }
 
-    // Cleanup files in Virtual FS to free up browser memory
+    // 仮想FSのメモリ解放
     await instance.deleteFile('input.mp4');
     await instance.deleteFile('output.mp4');
 
-    // UI Finish update
+    // リフレッシュ・後処理
     if (progressTimer) clearInterval(progressTimer);
+    window.removeEventListener('beforeunload', preventUnload);
     releaseWakeLock();
 
+    // 削減サイズ表示の設定
     const beforeMB = selectedFile.size / (1024 * 1024);
     const afterMB = compressedBlob.size / (1024 * 1024);
 
@@ -255,8 +317,8 @@ async function startCompression() {
     console.error('Encoding process failure:', error);
     alert('圧縮処理中にエラーが発生しました。別の動画を試すか、再度やり直してください。');
     
-    // Safety cleanup
     if (progressTimer) clearInterval(progressTimer);
+    window.removeEventListener('beforeunload', preventUnload);
     releaseWakeLock();
     resetUI();
   }
@@ -264,19 +326,17 @@ async function startCompression() {
 
 startCompressBtn.addEventListener('click', startCompression);
 
-// Number prototype helper to clamp values
-// Add locally as inline extension function helper to avoid prototype pollution issues
+// coerceIn 拡張関数定義
 Number.prototype.coerceIn = function(min: number, max: number): number {
   return Math.max(min, Math.min(max, this.valueOf()));
 };
-// TypeScript typing definition for coerceIn
 declare global {
   interface Number {
     coerceIn(min: number, max: number): number;
   }
 }
 
-// 5. Download Trigger & Reset UI
+// 8. ローカルダウンロード処理
 downloadBtn.addEventListener('click', () => {
   if (!compressedBlob) return;
   const url = URL.createObjectURL(compressedBlob);
@@ -289,6 +349,7 @@ downloadBtn.addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
+// 9. もう一回やる（リセット処理）
 resetBtn.addEventListener('click', () => {
   resetUI();
 });

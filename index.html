@@ -16,7 +16,7 @@
   <!-- SEO -->
   <meta name="description" content="スマートフォン上で動画をLINE送信向けに「超シンプル」に最適圧縮するPWAアプリ。外部に動画を送信せず、端末内だけで完結する安全なエンコーダーです。">
   
-  <!-- Inline Premium Design System CSS (Ensures zero CSS loading delay) -->
+  <!-- インラインプレミアムCSSシステム -->
   <style>
     :root {
       --bg-start: #0f172a;
@@ -44,7 +44,7 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      padding: 16.dp;
+      padding: 16px;
       overflow-x: hidden;
     }
 
@@ -86,6 +86,46 @@
       display: flex;
       flex-direction: column;
       gap: 20px;
+    }
+
+    /* インストール促進エリア */
+    .install-area {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .install-btn {
+      background-color: #3b82f6;
+      border: none;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      transition: all 0.2s ease;
+    }
+
+    .install-btn:hover {
+      background-color: #2563eb;
+    }
+
+    .ios-install-guide {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      text-align: center;
+      line-height: 1.4;
+      padding: 12px;
+      background-color: #334155;
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
     }
 
     /* 2択トグルボタン */
@@ -167,13 +207,14 @@
     }
 
     .file-info {
-      font-size: 0.8rem;
+      font-size: 0.9rem;
       color: var(--primary);
       font-weight: 700;
       margin-top: 4px;
+      word-break: break-all;
     }
 
-    /* 汎用ボタン */
+    /* 実行ボタン */
     .btn {
       width: 100%;
       border: none;
@@ -290,7 +331,17 @@
     </header>
 
     <div class="card">
-      <!-- 2択画質設定 -->
+      <!-- アプリインストールエリア -->
+      <div id="installArea" class="install-area hidden">
+        <button id="installBtn" class="install-btn hidden">
+          📱 アプリとしてインストール
+        </button>
+        <p id="iosInstallGuide" class="ios-install-guide hidden">
+          ※iPhoneの方は、画面下部の <strong>[↑] (共有ボタン)</strong> から<strong>『ホーム画面に追加』</strong>をタップしてください。
+        </p>
+      </div>
+
+      <!-- 2択トグルボタン -->
       <div id="modeSection">
         <div class="mode-select-grid">
           <button type="button" id="modeHigh" class="mode-btn active">
@@ -304,7 +355,7 @@
         </div>
       </div>
 
-      <!-- 動画アップロードエリア -->
+      <!-- 動画選択エリア -->
       <div id="uploadSection">
         <div class="dropzone" id="dropzone">
           <input type="file" id="fileInput" class="hidden" accept="video/*" style="display: none;">
@@ -320,7 +371,7 @@
         ② ちっちゃくする！
       </button>
 
-      <!-- 進行状況インジケータ -->
+      <!-- 進行状況表示 -->
       <div id="progressSection" class="progress-container hidden">
         <div class="progress-header">
           <span id="progressStatus">ちっちゃくしています...</span>
@@ -332,7 +383,7 @@
         <p id="elapsedTime" style="font-size: 0.75rem; text-align: center; color: var(--text-secondary); margin-top: 4px;">経過時間: 0秒</p>
       </div>
 
-      <!-- 完了結果 & 保存ボタン -->
+      <!-- 完了・保存セクション -->
       <div id="resultSection" class="result-section hidden">
         <div class="success-icon">✅</div>
         <h3 style="font-size: 1.1rem; font-weight: 700;">ちっちゃくなりました！</h3>
@@ -353,13 +404,12 @@
         </button>
         
         <button id="resetBtn" class="btn" style="background-color: transparent; border: 1px solid var(--border-color); margin-top: 4px;">
-          別の動画をちっちゃくする
+          🔄 別の動画をちっちゃくする
         </button>
       </div>
     </div>
   </div>
 
-  <!-- Entry Script (TypeScript compiler outputs main.js) -->
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
