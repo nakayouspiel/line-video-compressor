@@ -21,28 +21,18 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
 
-    # 3. Gradle のセットアップ (GitHub Actionsのランナー環境にGradleを準備)
-    - name: Setup Gradle
+    # 3. Gradle 8.2 の明示的セットアップ (システムのデフォルトGradle 9.6.0等との衝突を完全防止)
+    - name: Setup Gradle 8.2
       uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: 8.2
 
-    # 4. Gradle Wrapper がリポジトリにない場合に自動生成
-    - name: Generate Gradle Wrapper if missing
-      run: |
-        if [ ! -f gradlew ]; then
-          gradle wrapper --gradle-version 8.2
-        fi
-
-    # 5. 実行権限の付与
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-
-    # 6. APKのビルド実行 (assembleDebug)
+    # 4. APKのビルド実行 (セットアップしたGradle 8.2を直接呼び出してクリーンビルド)
     - name: Build debug APK
-      run: ./gradlew assembleDebug --stacktrace
+      run: gradle assembleDebug --stacktrace
 
-    # 7. 生成された APK ファイルを GitHub の Artifacts へアップロード
+    # 5. 生成された APK ファイルを GitHub の Artifacts へアップロード
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:

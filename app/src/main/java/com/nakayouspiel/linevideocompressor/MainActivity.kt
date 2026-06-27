@@ -31,10 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
-import com.arthenica.ffmpegkit.Statistics
-import com.arthenica.ffmpegkit.StatisticsCallback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -61,18 +58,15 @@ fun LineCompressorApp(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // App state
+    // App State
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
     var videoName by remember { mutableStateOf("") }
     var videoSizeMB by remember { mutableStateOf(0.0) }
     var videoDurationSec by remember { mutableStateOf(0.0) }
 
-    var targetSizeMB by remember { mutableStateOf(30) } // Default 30MB (High quality)
+    var targetSizeMB by remember { mutableStateOf(30) } // デフォルト 30MB (高画質)
     var isCompressing by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0) }
     var elapsedSeconds by remember { mutableStateOf(0) }
-
-    // Statistics loop logic
     var isSuccess by remember { mutableStateOf<Boolean?>(null) }
     var outputSizeMB by remember { mutableStateOf(0.0) }
 
@@ -98,18 +92,15 @@ fun LineCompressorApp(
 
         selectedVideoUri = uri
         isSuccess = null
-        progress = 0
+        elapsedSeconds = 0
 
-        // Retrieve video info
+        // Extract video info
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, uri)
-            
-            // Duration
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             videoDurationSec = (durationStr?.toDoubleOrNull() ?: 0.0) / 1000.0
 
-            // File Name & Size
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
@@ -131,7 +122,6 @@ fun LineCompressorApp(
     val backgroundEnd = Color(0xFF1E293B)
     val cardBackground = Color(0xFF1E293B)
     val primaryColor = Color(0xFF10B981) // Green
-    val primaryGradient = Brush.horizontalGradient(listOf(Color(0xFF10B981), Color(0xFF059669)))
 
     Box(
         modifier = Modifier
@@ -288,8 +278,6 @@ fun LineCompressorApp(
                             onClick = {
                                 val uri = selectedVideoUri ?: return@Button
                                 isCompressing = true
-                                progress = 0
-                                elapsedSeconds = 0
                                 isSuccess = null
                                 onCompressStart()
 
@@ -298,9 +286,7 @@ fun LineCompressorApp(
                                         context = context,
                                         inputUri = uri,
                                         targetSizeMB = targetSizeMB,
-                                        bitrate = calculatedBitrate,
-                                        totalDuration = videoDurationSec,
-                                        onProgressUpdate = { progress = it }
+                                        bitrate = calculatedBitrate
                                     )
                                     isCompressing = false
                                     onCompressEnd()
@@ -352,23 +338,6 @@ fun LineCompressorApp(
                             fontSize = 11.sp,
                             textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(24.dp))
-                        LinearProgressIndicator(
-                            progress = progress / 100f,
-                            color = primaryColor,
-                            trackColor = Color.DarkGray,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("進捗状況", color = Color.Gray, fontSize = 12.sp)
-                            Text("$progress%", color = primaryColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
                     }
                 }
             }
@@ -392,9 +361,9 @@ fun LineCompressorApp(
                         if (isSuccess == true) {
                             Text("✅", fontSize = 64.sp)
                             Spacer(modifier = Modifier.height(16.dp))
-                            Text("ちっちゃくなりました！", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text("ちっちゃくなった！", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Movies / LineChiccha フォルダに保存されました。", color = Color.LightGray, fontSize = 12.sp, textAlign = TextAlign.Center)
+                            Text("Movies/LineChiccha フォルダに保存されました。", color = Color.LightGray, fontSize = 12.sp, textAlign = TextAlign.Center)
                             
                             Spacer(modifier = Modifier.height(24.dp))
                             Row(
@@ -439,7 +408,6 @@ fun LineCompressorApp(
                             onClick = {
                                 selectedVideoUri = null
                                 isSuccess = null
-                                progress = 0
                             },
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
@@ -456,17 +424,15 @@ fun LineCompressorApp(
     }
 }
 
-// Perform compression on Dispatchers.IO background thread using FFmpegKit
+// Perform compression using FFmpegKit on Dispatchers.IO background thread
 private suspend fun performCompression(
     context: Context,
     inputUri: Uri,
     targetSizeMB: Int,
-    bitrate: Int,
-    totalDuration: Double,
-    onProgressUpdate: (Int) -> Unit
+    bitrate: Int
 ): File? = withContext(Dispatchers.IO) {
     try {
-        // Create local temp workspace
+        // Create local temp cache workspace files
         val tempInputFile = File(context.cacheDir, "input_${System.currentTimeMillis()}.mp4")
         val tempOutputFile = File(context.cacheDir, "chiccha_out_${System.currentTimeMillis()}.mp4")
 
@@ -474,19 +440,6 @@ private suspend fun performCompression(
         context.contentResolver.openInputStream(inputUri)?.use { inputStream ->
             tempInputFile.outputStream().use { outputStream ->
                 inputStream.copyTo(outputStream)
-            }
-        }
-
-        // Configure progress stats callback
-        FFmpegKitConfig.enableStatisticsCallback { stats: Statistics ->
-            if (totalDuration > 0) {
-                val timeInMilliseconds = stats.time.toDouble()
-                val totalTimeInMilliseconds = totalDuration * 1000.0
-                val progressPercentage = ((timeInMilliseconds / totalTimeInMilliseconds) * 100).toInt()
-                val clampedProgress = progressPercentage.coerceIn(0, 99)
-                
-                // Post progress back to UI main thread
-                onProgressUpdate(clampedProgress)
             }
         }
 
@@ -511,15 +464,12 @@ private suspend fun performCompression(
 
         cmd.add(tempOutputFile.absolutePath)
 
-        // Execute FFmpeg execution command synchronously (on IO dispatcher thread)
+        // Run FFmpeg synchronously on IO thread
         val session = FFmpegKit.execute(cmd.toTypedArray())
-
-        // Clear statistic callback config
-        FFmpegKitConfig.enableStatisticsCallback(null)
 
         val returnCode = session.returnCode
         if (ReturnCode.isSuccess(returnCode)) {
-            // Save final output file to Movies/LineChiccha MediaStore Gallery
+            // Save final output file to MediaStore Video Gallery
             val resolver = context.contentResolver
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, "chiccha_${System.currentTimeMillis()}.mp4")
@@ -540,14 +490,8 @@ private suspend fun performCompression(
             tempInputFile.delete()
             tempOutputFile.delete()
 
-            onProgressUpdate(100)
             return@withContext tempOutputFile
         } else {
-            // Log output in case of error
-            val logs = session.logs
-            for (log in logs) {
-                android.util.Log.e("FFmpegKit", log.message)
-            }
             tempInputFile.delete()
             tempOutputFile.delete()
             return@withContext null
